@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.4.553">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Hanna Tatsuta Galassi">
+<meta name="dcterms.date" content="2026-01-10">
+
+<title>EDA: Ingestão e tratamento de dados inicial do dataset</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+</style>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script><script src="01-htg-import-eda_files/libs/clipboard/clipboard.min.js"></script>
+<script src="01-htg-import-eda_files/libs/quarto-html/quarto.js"></script>
+<script src="01-htg-import-eda_files/libs/quarto-html/popper.min.js"></script>
+<script src="01-htg-import-eda_files/libs/quarto-html/tippy.umd.min.js"></script>
+<script src="01-htg-import-eda_files/libs/quarto-html/anchor.min.js"></script>
+<link href="01-htg-import-eda_files/libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="01-htg-import-eda_files/libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="01-htg-import-eda_files/libs/bootstrap/bootstrap.min.js"></script>
+<link href="01-htg-import-eda_files/libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="01-htg-import-eda_files/libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" integrity="sha512-c3Nl8+7g4LMSTdrm621y7kf9v3SDPnhxLNhcjFJbKECVnmZHTdo+IRO05sNLTH/D3vA6u1X32ehoLC7WFVdheg==" crossorigin="anonymous"></script>
+
+<script type="application/javascript">define('jquery', [],function() {return window.jQuery;})</script>
+
+
+</head>
+
+<body>
+
+<div id="quarto-content" class="page-columns page-rows-contents page-layout-article">
+<div id="quarto-margin-sidebar" class="sidebar margin-sidebar">
+  <nav id="TOC" role="doc-toc" class="toc-active">
+    <h2 id="toc-title">Table of contents</h2>
+   
+  <ul>
+  <li><a href="#visão-geral-dos-dados" id="toc-visão-geral-dos-dados" class="nav-link active" data-scroll-target="#visão-geral-dos-dados">Visão geral dos dados</a>
+  <ul class="collapse">
+  <li><a href="#visualização-dos-dados-importados" id="toc-visualização-dos-dados-importados" class="nav-link" data-scroll-target="#visualização-dos-dados-importados">Visualização dos dados importados</a></li>
+  <li><a href="#colunas-presentes-no-dataset" id="toc-colunas-presentes-no-dataset" class="nav-link" data-scroll-target="#colunas-presentes-no-dataset">Colunas presentes no dataset</a></li>
+  <li><a href="#tratamento-da-coluna-date" id="toc-tratamento-da-coluna-date" class="nav-link" data-scroll-target="#tratamento-da-coluna-date">Tratamento da coluna “date”</a></li>
+  </ul></li>
+  <li><a href="#visualização-das-variáveis" id="toc-visualização-das-variáveis" class="nav-link" data-scroll-target="#visualização-das-variáveis">Visualização das variáveis</a>
+  <ul class="collapse">
+  <li><a href="#visualização-temporal" id="toc-visualização-temporal" class="nav-link" data-scroll-target="#visualização-temporal">Visualização temporal</a></li>
+  <li><a href="#visualização-das-distribuições" id="toc-visualização-das-distribuições" class="nav-link" data-scroll-target="#visualização-das-distribuições">Visualização das distribuições</a></li>
+  </ul></li>
+  </ul>
+</nav>
+</div>
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">EDA: Ingestão e tratamento de dados inicial do dataset</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>Hanna Tatsuta Galassi </p>
+          </div>
+  </div>
+    
+    <div>
+    <div class="quarto-title-meta-heading">Published</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">January 10, 2026</p>
+    </div>
+  </div>
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<div id="3a95f503" class="cell" data-execution_count="1">
+<div class="cell-output cell-output-stderr">
+<pre><code>/home/htgalassi/workspace/ufmg-ecd-monografia-eda/env/lib/python3.10/site-packages/tqdm/auto.py:21: TqdmWarning:
+
+IProgress not found. Please update jupyter and ipywidgets. See https://ipywidgets.readthedocs.io/en/stable/user_install.html
+</code></pre>
+</div>
+</div>
+<section id="visão-geral-dos-dados" class="level1">
+<h1>Visão geral dos dados</h1>
+<p>O dataset encontra-se disponível para download na plataforma Kaggle, no link <a href="https://www.kaggle.com/datasets/edumagalhaes/quality-prediction-in-a-mining-process">https://www.kaggle.com/datasets/edumagalhaes/quality-prediction-in-a-mining-process</a></p>
+<p>Os dados são referentes a um processo de flotação em uma planta de minério de ferro.</p>
+<p><strong>TO-DO</strong>: adicionar breve descrição do processo de flotação</p>
+<p>Algumas variáveis são medidas com sensores online, e nesse dataset estão amostradas a cada 20 segundos. Outras - entre elas a concentração de Sílica na corrente de Concentrado, variável de interesse - são medidas em laboratório a cada 2 horas.</p>
+<p>Nesse dataset, as variáveis com amostragem a cada 2 horas tiveram os valores vazios previamente preenchidos com o último valor disponível, gerando o comportamento de “congelamento” que será observado nos gráficos temporais. Tal comportamento será devidamente tratado antes das análises.</p>
+<section id="visualização-dos-dados-importados" class="level2">
+<h2 class="anchored" data-anchor-id="visualização-dos-dados-importados">Visualização dos dados importados</h2>
+<div id="2c88ffde" class="cell" data-execution_count="5">
+<div class="cell-output cell-output-display" data-execution_count="5">
+<div>
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-quarto-postprocess="true" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">date</th>
+<th data-quarto-table-cell-role="th">% Iron Feed</th>
+<th data-quarto-table-cell-role="th">% Silica Feed</th>
+<th data-quarto-table-cell-role="th">Starch Flow</th>
+<th data-quarto-table-cell-role="th">Amina Flow</th>
+<th data-quarto-table-cell-role="th">Ore Pulp Flow</th>
+<th data-quarto-table-cell-role="th">Ore Pulp pH</th>
+<th data-quarto-table-cell-role="th">Ore Pulp Density</th>
+<th data-quarto-table-cell-role="th">Flotation Column 01 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 02 Air Flow</th>
+<th data-quarto-table-cell-role="th">...</th>
+<th data-quarto-table-cell-role="th">Flotation Column 07 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 01 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 02 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 03 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 04 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 05 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 06 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 07 Level</th>
+<th data-quarto-table-cell-role="th">% Iron Concentrate</th>
+<th data-quarto-table-cell-role="th">% Silica Concentrate</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">0</td>
+<td>2017-03-10 01:00:00</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3019.53</td>
+<td>557.434</td>
+<td>395.713</td>
+<td>10.0664</td>
+<td>1.74</td>
+<td>249.214</td>
+<td>253.235</td>
+<td>...</td>
+<td>250.884</td>
+<td>457.396</td>
+<td>432.962</td>
+<td>424.954</td>
+<td>443.558</td>
+<td>502.255</td>
+<td>446.370</td>
+<td>523.344</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">1</td>
+<td>2017-03-10 01:00:00</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3024.41</td>
+<td>563.965</td>
+<td>397.383</td>
+<td>10.0672</td>
+<td>1.74</td>
+<td>249.719</td>
+<td>250.532</td>
+<td>...</td>
+<td>248.994</td>
+<td>451.891</td>
+<td>429.560</td>
+<td>432.939</td>
+<td>448.086</td>
+<td>496.363</td>
+<td>445.922</td>
+<td>498.075</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">2</td>
+<td>2017-03-10 01:00:00</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3043.46</td>
+<td>568.054</td>
+<td>399.668</td>
+<td>10.0680</td>
+<td>1.74</td>
+<td>249.741</td>
+<td>247.874</td>
+<td>...</td>
+<td>248.071</td>
+<td>451.240</td>
+<td>468.927</td>
+<td>434.610</td>
+<td>449.688</td>
+<td>484.411</td>
+<td>447.826</td>
+<td>458.567</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">3</td>
+<td>2017-03-10 01:00:00</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3047.36</td>
+<td>568.665</td>
+<td>397.939</td>
+<td>10.0689</td>
+<td>1.74</td>
+<td>249.917</td>
+<td>254.487</td>
+<td>...</td>
+<td>251.147</td>
+<td>452.441</td>
+<td>458.165</td>
+<td>442.865</td>
+<td>446.210</td>
+<td>471.411</td>
+<td>437.690</td>
+<td>427.669</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">4</td>
+<td>2017-03-10 01:00:00</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3033.69</td>
+<td>558.167</td>
+<td>400.254</td>
+<td>10.0697</td>
+<td>1.74</td>
+<td>250.203</td>
+<td>252.136</td>
+<td>...</td>
+<td>248.928</td>
+<td>452.441</td>
+<td>452.900</td>
+<td>450.523</td>
+<td>453.670</td>
+<td>462.598</td>
+<td>443.682</td>
+<td>425.679</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+</tbody>
+</table>
+
+<p>5 rows × 24 columns</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section id="colunas-presentes-no-dataset" class="level2">
+<h2 class="anchored" data-anchor-id="colunas-presentes-no-dataset">Colunas presentes no dataset</h2>
+<div id="400b2567" class="cell" data-execution_count="6">
+<div class="cell-output cell-output-stdout">
+<pre><code>date
+% Iron Feed
+% Silica Feed
+Starch Flow
+Amina Flow
+Ore Pulp Flow
+Ore Pulp pH
+Ore Pulp Density
+Flotation Column 01 Air Flow
+Flotation Column 02 Air Flow
+Flotation Column 03 Air Flow
+Flotation Column 04 Air Flow
+Flotation Column 05 Air Flow
+Flotation Column 06 Air Flow
+Flotation Column 07 Air Flow
+Flotation Column 01 Level
+Flotation Column 02 Level
+Flotation Column 03 Level
+Flotation Column 04 Level
+Flotation Column 05 Level
+Flotation Column 06 Level
+Flotation Column 07 Level
+% Iron Concentrate
+% Silica Concentrate</code></pre>
+</div>
+</div>
+</section>
+<section id="tratamento-da-coluna-date" class="level2">
+<h2 class="anchored" data-anchor-id="tratamento-da-coluna-date">Tratamento da coluna “date”</h2>
+<p>A coluna ‘date’ contém dados no formato “ano-mês-dia hora:minuto:segundo”, e os valores variam com incremento de uma hora. Apesar do formato, os minutos e segundos de cada linha não são especificados nessa coluna, e por isso há repetição de valores de data. Para cada 1h de dados, temos 180 pontos (informação corroborada pela descrição no Kaggle, que especifica que há no dataframe variáveis cuja coleta ocorre a cada 20 segundos)</p>
+<p>Seria vantajoso para a análise utilizar essa coluna como índice do dataframe. Para isso, é importante tratar a coluna adicionando os minutos e segundos, de maneira a ter valores únicos de data e hora.</p>
+<div id="a01486af" class="cell" data-execution_count="7">
+<div class="cell-output cell-output-stdout">
+<pre><code>Data inicial: 2017-03-10 01:00:00
+Data final: 2017-09-09 23:00:00</code></pre>
+</div>
+</div>
+<div id="b229f87d" class="cell" data-execution_count="8">
+<div class="cell-output cell-output-display" data-execution_count="8">
+<div>
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-quarto-postprocess="true" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">date</th>
+<th data-quarto-table-cell-role="th">date_fixed</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">0</td>
+<td>2017-03-10 01:00:00</td>
+<td>2017-03-10 01:01:20</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">1</td>
+<td>2017-03-10 01:00:00</td>
+<td>2017-03-10 01:01:40</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">2</td>
+<td>2017-03-10 01:00:00</td>
+<td>2017-03-10 01:02:00</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">3</td>
+<td>2017-03-10 01:00:00</td>
+<td>2017-03-10 01:02:20</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">4</td>
+<td>2017-03-10 01:00:00</td>
+<td>2017-03-10 01:02:40</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">...</td>
+<td>...</td>
+<td>...</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">737448</td>
+<td>2017-09-09 23:00:00</td>
+<td>2017-09-09 23:57:20</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">737449</td>
+<td>2017-09-09 23:00:00</td>
+<td>2017-09-09 23:57:40</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">737450</td>
+<td>2017-09-09 23:00:00</td>
+<td>2017-09-09 23:58:00</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">737451</td>
+<td>2017-09-09 23:00:00</td>
+<td>2017-09-09 23:58:20</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">737452</td>
+<td>2017-09-09 23:00:00</td>
+<td>2017-09-09 23:58:40</td>
+</tr>
+</tbody>
+</table>
+
+<p>737453 rows × 2 columns</p>
+</div>
+</div>
+</div>
+</div>
+<p>Uma vez tratada e sem valores repetidos, a coluna ‘date_fixed’ pode ser utilizada como índice do dataframe</p>
+<div id="f479a711" class="cell" data-execution_count="9">
+<div class="cell-output cell-output-display" data-execution_count="9">
+<div>
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-quarto-postprocess="true" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">% Iron Feed</th>
+<th data-quarto-table-cell-role="th">% Silica Feed</th>
+<th data-quarto-table-cell-role="th">Starch Flow</th>
+<th data-quarto-table-cell-role="th">Amina Flow</th>
+<th data-quarto-table-cell-role="th">Ore Pulp Flow</th>
+<th data-quarto-table-cell-role="th">Ore Pulp pH</th>
+<th data-quarto-table-cell-role="th">Ore Pulp Density</th>
+<th data-quarto-table-cell-role="th">Flotation Column 01 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 02 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 03 Air Flow</th>
+<th data-quarto-table-cell-role="th">...</th>
+<th data-quarto-table-cell-role="th">Flotation Column 07 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 01 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 02 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 03 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 04 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 05 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 06 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 07 Level</th>
+<th data-quarto-table-cell-role="th">% Iron Concentrate</th>
+<th data-quarto-table-cell-role="th">% Silica Concentrate</th>
+</tr>
+<tr class="odd">
+<th data-quarto-table-cell-role="th">date_fixed</th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th"></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">2017-03-10 01:01:20</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3019.53</td>
+<td>557.434</td>
+<td>395.713</td>
+<td>10.0664</td>
+<td>1.74</td>
+<td>249.214</td>
+<td>253.235</td>
+<td>250.576</td>
+<td>...</td>
+<td>250.884</td>
+<td>457.396</td>
+<td>432.962</td>
+<td>424.954</td>
+<td>443.558</td>
+<td>502.255</td>
+<td>446.370</td>
+<td>523.344</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">2017-03-10 01:01:40</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3024.41</td>
+<td>563.965</td>
+<td>397.383</td>
+<td>10.0672</td>
+<td>1.74</td>
+<td>249.719</td>
+<td>250.532</td>
+<td>250.862</td>
+<td>...</td>
+<td>248.994</td>
+<td>451.891</td>
+<td>429.560</td>
+<td>432.939</td>
+<td>448.086</td>
+<td>496.363</td>
+<td>445.922</td>
+<td>498.075</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">2017-03-10 01:02:00</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3043.46</td>
+<td>568.054</td>
+<td>399.668</td>
+<td>10.0680</td>
+<td>1.74</td>
+<td>249.741</td>
+<td>247.874</td>
+<td>250.313</td>
+<td>...</td>
+<td>248.071</td>
+<td>451.240</td>
+<td>468.927</td>
+<td>434.610</td>
+<td>449.688</td>
+<td>484.411</td>
+<td>447.826</td>
+<td>458.567</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">2017-03-10 01:02:20</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3047.36</td>
+<td>568.665</td>
+<td>397.939</td>
+<td>10.0689</td>
+<td>1.74</td>
+<td>249.917</td>
+<td>254.487</td>
+<td>250.049</td>
+<td>...</td>
+<td>251.147</td>
+<td>452.441</td>
+<td>458.165</td>
+<td>442.865</td>
+<td>446.210</td>
+<td>471.411</td>
+<td>437.690</td>
+<td>427.669</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">2017-03-10 01:02:40</td>
+<td>55.2</td>
+<td>16.98</td>
+<td>3033.69</td>
+<td>558.167</td>
+<td>400.254</td>
+<td>10.0697</td>
+<td>1.74</td>
+<td>250.203</td>
+<td>252.136</td>
+<td>249.895</td>
+<td>...</td>
+<td>248.928</td>
+<td>452.441</td>
+<td>452.900</td>
+<td>450.523</td>
+<td>453.670</td>
+<td>462.598</td>
+<td>443.682</td>
+<td>425.679</td>
+<td>66.91</td>
+<td>1.31</td>
+</tr>
+</tbody>
+</table>
+
+<p>5 rows × 23 columns</p>
+</div>
+</div>
+</div>
+</div>
+</section>
+</section>
+<section id="visualização-das-variáveis" class="level1">
+<h1>Visualização das variáveis</h1>
+<section id="visualização-temporal" class="level2">
+<h2 class="anchored" data-anchor-id="visualização-temporal">Visualização temporal</h2>
+<p>Para termos uma noção inicial do comportamento temporal das variáveis presentes no dataset, plotamos a série temporal de todas as variáveis.</p>
+<div id="1ddb8597" class="cell" data-execution_count="12">
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-1.png" width="939" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-2.png" width="939" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-3.png" width="955" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-4.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-5.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-6.png" width="951" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-7.png" width="951" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-8.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-9.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-10.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-11.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-12.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-13.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-14.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-15.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-16.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-17.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-18.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-19.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-20.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-21.png" width="947" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-22.png" width="939" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-13-output-23.png" width="939" height="560" class="figure-img"></p>
+</figure>
+</div>
+</div>
+</div>
+<ol type="1">
+<li><p>Os dados aparentam já ter passado por um pré-tratamento. Não parece haver períodos de parada do processo (que poderiam ser identificados por reduções significativas na alimentação de minério de ferro, por exemplo). Além disso, os valores máximos e mínimos da maioria das variáveis estão dentro de um range de (média +- 3 desvios padrões) da própria variável. Isso indica que essa base de dados já passou por algum procedimento de remoção de outliers. Por essa razão, inicialmente não será realizado na presente análise um procedimento de retirada de outliers</p></li>
+<li><p>As variáveis ‘Flotation Column 04 Air Flow’ e ‘Flotation Column 05 Air Flow’ parecem estar congeladas no início do período (até 24/04/2017). Caso essas variáveis sejam utilizadas na análise ou na construção do modelo, será necessário remover ou tratar esse período.</p></li>
+<li><p>As variáveis ‘% Iron Feed’ e ‘% Silica Feed’ também aparentam estar congeladas em alguns períodos (períodos diferentes do citado no item 2). Assim como no item 2, caso essas variáveis sejam utilizadas na análise ou na construção do modelo, será necessário remover ou tratar esse período.</p></li>
+</ol>
+</section>
+<section id="visualização-das-distribuições" class="level2">
+<h2 class="anchored" data-anchor-id="visualização-das-distribuições">Visualização das distribuições</h2>
+<div id="db5171ca" class="cell" data-execution_count="13">
+<div class="cell-output cell-output-display" data-execution_count="13">
+<div>
+<div>
+
+
+<table class="dataframe table table-sm table-striped small" data-quarto-postprocess="true" data-border="1">
+<thead>
+<tr class="header">
+<th data-quarto-table-cell-role="th"></th>
+<th data-quarto-table-cell-role="th">% Iron Feed</th>
+<th data-quarto-table-cell-role="th">% Silica Feed</th>
+<th data-quarto-table-cell-role="th">Starch Flow</th>
+<th data-quarto-table-cell-role="th">Amina Flow</th>
+<th data-quarto-table-cell-role="th">Ore Pulp Flow</th>
+<th data-quarto-table-cell-role="th">Ore Pulp pH</th>
+<th data-quarto-table-cell-role="th">Ore Pulp Density</th>
+<th data-quarto-table-cell-role="th">Flotation Column 01 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 02 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 03 Air Flow</th>
+<th data-quarto-table-cell-role="th">...</th>
+<th data-quarto-table-cell-role="th">Flotation Column 07 Air Flow</th>
+<th data-quarto-table-cell-role="th">Flotation Column 01 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 02 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 03 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 04 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 05 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 06 Level</th>
+<th data-quarto-table-cell-role="th">Flotation Column 07 Level</th>
+<th data-quarto-table-cell-role="th">% Iron Concentrate</th>
+<th data-quarto-table-cell-role="th">% Silica Concentrate</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">count</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>...</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+<td>737273.000000</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">mean</td>
+<td>56.296337</td>
+<td>14.649629</td>
+<td>2868.952725</td>
+<td>488.151381</td>
+<td>397.582462</td>
+<td>9.767667</td>
+<td>1.680383</td>
+<td>280.147064</td>
+<td>277.154366</td>
+<td>281.077818</td>
+<td>...</td>
+<td>290.748872</td>
+<td>520.274173</td>
+<td>522.655152</td>
+<td>531.270338</td>
+<td>420.326236</td>
+<td>425.233290</td>
+<td>429.948480</td>
+<td>421.026662</td>
+<td>65.050258</td>
+<td>2.326914</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">std</td>
+<td>5.157360</td>
+<td>6.806959</td>
+<td>1215.230189</td>
+<td>91.240283</td>
+<td>9.697337</td>
+<td>0.387050</td>
+<td>0.069257</td>
+<td>29.623308</td>
+<td>30.150871</td>
+<td>28.560239</td>
+<td>...</td>
+<td>28.666363</td>
+<td>131.017351</td>
+<td>128.179108</td>
+<td>150.768369</td>
+<td>91.804277</td>
+<td>84.531744</td>
+<td>89.869727</td>
+<td>84.899662</td>
+<td>1.118715</td>
+<td>1.125650</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">min</td>
+<td>42.740000</td>
+<td>1.310000</td>
+<td>0.002026</td>
+<td>241.669000</td>
+<td>376.249000</td>
+<td>8.753340</td>
+<td>1.519820</td>
+<td>175.510000</td>
+<td>175.156000</td>
+<td>176.469000</td>
+<td>...</td>
+<td>185.962000</td>
+<td>149.218000</td>
+<td>210.752000</td>
+<td>126.255000</td>
+<td>162.201000</td>
+<td>166.991000</td>
+<td>155.841000</td>
+<td>175.349000</td>
+<td>62.050000</td>
+<td>0.600000</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">25%</td>
+<td>52.670000</td>
+<td>8.940000</td>
+<td>2076.170000</td>
+<td>431.776000</td>
+<td>394.272000</td>
+<td>9.527290</td>
+<td>1.647290</td>
+<td>250.280000</td>
+<td>250.456000</td>
+<td>250.854000</td>
+<td>...</td>
+<td>256.252000</td>
+<td>417.046000</td>
+<td>441.873000</td>
+<td>411.305000</td>
+<td>356.670000</td>
+<td>357.645000</td>
+<td>358.492000</td>
+<td>356.766000</td>
+<td>64.370000</td>
+<td>1.440000</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">50%</td>
+<td>56.080000</td>
+<td>13.850000</td>
+<td>3018.160000</td>
+<td>504.417000</td>
+<td>399.251000</td>
+<td>9.798230</td>
+<td>1.697620</td>
+<td>299.344000</td>
+<td>296.220000</td>
+<td>298.695000</td>
+<td>...</td>
+<td>299.011000</td>
+<td>491.899000</td>
+<td>495.951000</td>
+<td>494.286000</td>
+<td>411.992000</td>
+<td>408.752000</td>
+<td>424.699000</td>
+<td>411.071000</td>
+<td>65.210000</td>
+<td>2.000000</td>
+</tr>
+<tr class="odd">
+<td data-quarto-table-cell-role="th">75%</td>
+<td>59.720000</td>
+<td>19.600000</td>
+<td>3727.530000</td>
+<td>553.269000</td>
+<td>402.969000</td>
+<td>10.038000</td>
+<td>1.728340</td>
+<td>300.149000</td>
+<td>300.689000</td>
+<td>300.381000</td>
+<td>...</td>
+<td>301.904000</td>
+<td>594.129000</td>
+<td>595.481000</td>
+<td>601.225000</td>
+<td>485.565000</td>
+<td>484.299000</td>
+<td>492.706152</td>
+<td>476.486000</td>
+<td>65.870000</td>
+<td>3.010000</td>
+</tr>
+<tr class="even">
+<td data-quarto-table-cell-role="th">max</td>
+<td>65.780000</td>
+<td>33.400000</td>
+<td>6300.230000</td>
+<td>739.538000</td>
+<td>418.641000</td>
+<td>10.808100</td>
+<td>1.853250</td>
+<td>373.871000</td>
+<td>375.992000</td>
+<td>364.346000</td>
+<td>...</td>
+<td>371.593000</td>
+<td>862.274000</td>
+<td>828.919000</td>
+<td>886.822000</td>
+<td>680.359000</td>
+<td>675.644000</td>
+<td>698.861000</td>
+<td>659.902000</td>
+<td>68.010000</td>
+<td>5.530000</td>
+</tr>
+</tbody>
+</table>
+
+<p>8 rows × 23 columns</p>
+</div>
+</div>
+</div>
+</div>
+<div id="ae695991" class="cell" data-execution_count="14">
+<div class="cell-output cell-output-display" data-execution_count="14">
+<pre><code>array([[&lt;Axes: title={'center': '% Iron Feed'}&gt;,
+        &lt;Axes: title={'center': '% Silica Feed'}&gt;,
+        &lt;Axes: title={'center': 'Starch Flow'}&gt;],
+       [&lt;Axes: title={'center': 'Amina Flow'}&gt;,
+        &lt;Axes: title={'center': 'Ore Pulp Flow'}&gt;,
+        &lt;Axes: title={'center': 'Ore Pulp pH'}&gt;],
+       [&lt;Axes: title={'center': 'Ore Pulp Density'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 01 Air Flow'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 02 Air Flow'}&gt;],
+       [&lt;Axes: title={'center': 'Flotation Column 03 Air Flow'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 04 Air Flow'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 05 Air Flow'}&gt;],
+       [&lt;Axes: title={'center': 'Flotation Column 06 Air Flow'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 07 Air Flow'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 01 Level'}&gt;],
+       [&lt;Axes: title={'center': 'Flotation Column 02 Level'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 03 Level'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 04 Level'}&gt;],
+       [&lt;Axes: title={'center': 'Flotation Column 05 Level'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 06 Level'}&gt;,
+        &lt;Axes: title={'center': 'Flotation Column 07 Level'}&gt;],
+       [&lt;Axes: title={'center': '% Iron Concentrate'}&gt;,
+        &lt;Axes: title={'center': '% Silica Concentrate'}&gt;, &lt;Axes: &gt;],
+       [&lt;Axes: &gt;, &lt;Axes: &gt;, &lt;Axes: &gt;]], dtype=object)</code></pre>
+</div>
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-15-output-2.png" width="1205" height="3009" class="figure-img"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>A concentração de Silica na corrente de Concentrado (“% Silica Concentrate”), variável de interesse, apresenta uma distribuição assimétrica.</p>
+<p>Pelo formato do histograma da distribuição, poderia ser uma Gamma ou uma Lognormal.</p>
+<div id="9798db9d" class="cell" data-execution_count="16">
+<div class="cell-output cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="01-htg-import-eda_files/figure-html/cell-17-output-1.png" width="812" height="523" class="figure-img"></p>
+</figure>
+</div>
+</div>
+<div class="cell-output cell-output-stdout">
+<pre><code>=== Comparison of Distributions ===
+Gamma:
+  Params: 4.8099, 0.4837
+  AIC: 2072388.57
+  KS stat: 0.0866, p-value: 0.0000
+
+Lognormal:
+  Params: 0.4577, 2.0895
+  AIC: 2027103.73
+  KS stat: 0.0575, p-value: 0.0000
+
+Best fit by AIC: Lognormal
+Best fit by KS: Lognormal</code></pre>
+</div>
+</div>
+<p>Analisando as curvas em comparação ao histograma, o AIC e o teste de hipótese, a distribuição lognormal aparenta ter um melhor ajuste que a Gamma. Apesar disso, o teste KS retornou p-valor igual a 0 para ambas as distribuições, rejeitando a hipótese nula de que os dados pertencem a uma das duas distribuições.</p>
+<p>Nesse momento, não descartamos nenhuma das duas distribuições, apenas manteremos essas informações em mente ao longo das análises.</p>
+</section>
+</section>
+
+</main>
+<!-- /main column -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button', {
+    text: function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+    }
+  });
+  clipboard.on('success', function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  });
+    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+    var mailtoRegex = new RegExp(/^mailto:/);
+      var filterRegex = new RegExp('/' + window.location.host + '/');
+    var isInternal = (href) => {
+        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+    }
+    // Inspect non-navigation links and adorn them if external
+ 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool)');
+    for (var i=0; i<links.length; i++) {
+      const link = links[i];
+      if (!isInternal(link.href)) {
+        // undo the damage that might have been done by quarto-nav.js in the case of
+        // links that we want to consider external
+        if (link.dataset.originalHref !== undefined) {
+          link.href = link.dataset.originalHref;
+        }
+      }
+    }
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      if (note) {
+        return note.innerHTML;
+      } else {
+        return "";
+      }
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      // TODO in 1.5, we should make sure this works without a callout special case
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

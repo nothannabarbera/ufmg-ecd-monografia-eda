@@ -1,0 +1,103 @@
+---
+title: "EDA: Correlações entre variáveis"
+author: "Hanna Tatsuta Galassi"
+date: "2026-01-12"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+```{python}
+from datetime import date, timedelta, datetime
+import os
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from scipy.stats import gamma, lognorm, weibull_min, poisson, kstest
+from scipy.optimize import minimize
+
+```
+
+```{python}
+path_df = "../data/raw/datasets/edumagalhaes/" +\
+    "quality-prediction-in-a-mining-process/versions/1/" +\
+    "MiningProcess_Flotation_Plant_Database.csv"
+
+df_data = pd.read_csv(path_df, decimal=",", parse_dates=["date"])
+```
+
+
+## Colunas presentes no dataset
+```{python}
+data_start = str(df_data['date'].min())
+data_end = str(df_data['date'].max())
+
+print(f'Data inicial: {data_start}')
+print(f'Data final: {data_end}')
+```
+
+```{python}
+df_data['aux copia do indice'] = df_data.index
+df_data['date_fixed'] = df_data.apply(
+    lambda x: (x['date'] + (
+        ((x['aux copia do indice'] + 4) % 180) * timedelta(seconds = 20))),
+        axis = 1)
+df_data = df_data.drop(columns = ['aux copia do indice'])
+df_data[['date', 'date_fixed']]
+```
+
+Uma vez tratada e sem valores repetidos, a coluna 'date_fixed' pode ser utilizada como índice do dataframe
+
+```{python}
+df_data = df_data.drop(columns = ['date'])
+df_data.set_index('date_fixed', inplace = True)
+df_data.sort_index(inplace = True)
+```
+
+## Visualização dos dados importados
+
+```{python}
+df_data.head()
+```
+
+# Correlação entre as variáveis
+
+## Visualização da matriz de correlação
+
+```{python}
+df_variaveis_raw = df_data
+corr_raw = df_variaveis_raw.corr(method="spearman")
+```
+
+```{python}
+f, ax = plt.subplots(figsize = (16,9)) 
+mask = np.zeros_like(corr_raw, dtype = bool) 
+mask[np.triu_indices_from(mask)] = True #filtro para tirar a metade acima da diagonal principal, já que ela é igual à de baixo
+cmap = sns.diverging_palette(220, 10, as_cmap = True) 
+sns.heatmap(corr_raw, 
+            mask = mask, 
+            cmap = cmap, 
+            vmax = .3, 
+            center = 0, 
+            square = True, 
+            linewidths = .5, 
+            cbar_kws = {'shrink': .5})
+```
+
+De uma maneira geral, a concentração de Silica no Concentrado tem uma correlação baixa com as demais variáveis de processo. 
+
+A maior correlação é em relação à concentração de Ferro no Concentrado (correlação inversa > 0,8). Isso faz sentido, considerando que essas duas concentrações são complementares (visto que elas sáo medidas no mesmo ponto, e expressas em termos percentuais. Quando a % de Silica aumenta, a % de Ferro diminui).
+
+Sabendo disso, apesar da correlação alta, essa variável não pode ser utilizada para fazer predições da concentração de Silica. 
+
+
+## Correlações das variáveis com a variável alvo (% Silica Concentrate)
+
+```{python}
+corr_raw = [abs(corr_raw['% Silica Concentrate']) for i in corr_raw]
+corr_raw = corr_raw[0].sort_values(ascending = False)
+corr_raw
+```

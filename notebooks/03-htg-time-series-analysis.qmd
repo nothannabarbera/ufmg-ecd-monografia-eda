@@ -1,0 +1,208 @@
+---
+title: "EDA: Análise da concentração de Silica como série temporal"
+author: "Hanna Tatsuta Galassi"
+date: "2026-01-15"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+```{python}
+from datetime import date, timedelta, datetime
+import os
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+```
+
+```{python}
+path_df = "../data/raw/datasets/edumagalhaes/" +\
+    "quality-prediction-in-a-mining-process/versions/1/" +\
+    "MiningProcess_Flotation_Plant_Database.csv"
+
+df_data = pd.read_csv(path_df, decimal=",", parse_dates=["date"])
+```
+
+
+## Colunas presentes no dataset
+```{python}
+data_start = str(df_data['date'].min())
+data_end = str(df_data['date'].max())
+
+print(f'Data inicial: {data_start}')
+print(f'Data final: {data_end}')
+```
+
+```{python}
+df_data['aux copia do indice'] = df_data.index
+df_data['date_fixed'] = df_data.apply(
+    lambda x: (x['date'] + (
+        ((x['aux copia do indice'] + 4) % 180) * timedelta(seconds = 20))),
+        axis = 1)
+df_data = df_data.drop(columns = ['aux copia do indice'])
+df_data[['date', 'date_fixed']]
+```
+
+Uma vez tratada e sem valores repetidos, a coluna 'date_fixed' pode ser utilizada como índice do dataframe
+
+```{python}
+df_data = df_data.drop(columns = ['date'])
+df_data.set_index('date_fixed', inplace = True)
+df_data.sort_index(inplace = True)
+```
+
+## Visualização dos dados importados
+
+```{python}
+df_data.head()
+```
+
+# Ajuste de amostragem
+
+As medições de laboratório na corrente de concentrado são realizadas a cada 1h.
+
+Já na corrente de alimentação, são realizadas a cada 9 horas. 
+
+```{python}
+cols_9h = [
+    "% Iron Feed",
+    "% Silica Feed"]
+cols_1h = [
+    "% Iron Concentrate",
+    "% Silica Concentrate"
+]
+cols_24h = cols_1h + cols_9h
+
+df_1h_resampled = df_data[cols_1h].resample("1h").first()
+df_9h_resampled = df_data[cols_9h].resample("9h").first()
+df_24h_resampled = df_data[cols_24h].resample("1d").mean()
+```
+
+Ao fazer a reamostragem para a frequência de 1 horas, ficamos com **4415** amostras da variável de interesse, a concentração de Silica no concentrado.
+
+
+# Visualização das variáveis reamostradas
+
+## Corrente de concentrado (amostrada a cada 1 hora)
+
+```{python}
+df_plot = df_1h_resampled
+
+plot_start = data_start #'2017-05-01 00:00:00' #
+plot_end = data_end #'2017-05-02 00:00:00'
+
+df_plot = df_plot[((df_plot.index > plot_start) & 
+                   (df_plot.index < plot_end))]
+variables_to_plot = cols_1h
+```
+
+```{python}
+for var in variables_to_plot:
+    if var not in df_plot.columns:
+        print(f"Warning: '{var}' not found in DataFrame.")
+        continue
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_plot.index,
+        y=df_plot[var],
+        mode='lines',
+        line=dict(color='#023e56'),
+        name=var
+    ))
+
+    fig.update_layout(
+        title=var,
+        xaxis_title='Index',
+        yaxis_title=var,
+        template='plotly_white',
+        width=800,
+        height=675
+    )
+
+    fig.show()
+```
+
+
+## Corrente de alimentação (amostrada a cada 9 horas)
+
+```{python}
+df_plot = df_9h_resampled
+
+plot_start = data_start #'2017-05-01 00:00:00' #
+plot_end = data_end #'2017-05-02 00:00:00'
+
+df_plot = df_plot[((df_plot.index > plot_start) & 
+                   (df_plot.index < plot_end))]
+variables_to_plot = cols_9h
+```
+
+```{python}
+for var in variables_to_plot:
+    if var not in df_plot.columns:
+        print(f"Warning: '{var}' not found in DataFrame.")
+        continue
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_plot.index,
+        y=df_plot[var],
+        mode='lines',
+        line=dict(color='#023e56'),
+        name=var
+    ))
+
+    fig.update_layout(
+        title=var,
+        xaxis_title='Index',
+        yaxis_title=var,
+        template='plotly_white',
+        width=800,
+        height=675
+    )
+
+    fig.show()
+```
+
+## Reamostragem diária
+
+```{python}
+df_plot = df_24h_resampled
+
+plot_start = data_start #'2017-05-01 00:00:00' #
+plot_end = data_end #'2017-05-02 00:00:00'
+
+df_plot = df_plot[((df_plot.index > plot_start) & 
+                   (df_plot.index < plot_end))]
+variables_to_plot = cols_24h
+```
+
+```{python}
+for var in variables_to_plot:
+    if var not in df_plot.columns:
+        print(f"Warning: '{var}' not found in DataFrame.")
+        continue
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_plot.index,
+        y=df_plot[var],
+        mode='lines',
+        line=dict(color='#023e56'),
+        name=var
+    ))
+
+    fig.update_layout(
+        title=var,
+        xaxis_title='Index',
+        yaxis_title=var,
+        template='plotly_white',
+        width=800,
+        height=675
+    )
+
+    fig.show()
+```
+
