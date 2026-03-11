@@ -15,6 +15,7 @@ import os
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 ```
 
 ```{python}
@@ -205,4 +206,3 @@ for var in variables_to_plot:
 
     fig.show()
 ```
-
