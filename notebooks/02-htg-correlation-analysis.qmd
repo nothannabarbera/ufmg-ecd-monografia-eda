@@ -22,39 +22,8 @@ from scipy.optimize import minimize
 ```
 
 ```{python}
-path_df = "../data/raw/datasets/edumagalhaes/" +\
-    "quality-prediction-in-a-mining-process/versions/1/" +\
-    "MiningProcess_Flotation_Plant_Database.csv"
-
-df_data = pd.read_csv(path_df, decimal=",", parse_dates=["date"])
-```
-
-
-## Colunas presentes no dataset
-```{python}
-data_start = str(df_data['date'].min())
-data_end = str(df_data['date'].max())
-
-print(f'Data inicial: {data_start}')
-print(f'Data final: {data_end}')
-```
-
-```{python}
-df_data['aux copia do indice'] = df_data.index
-df_data['date_fixed'] = df_data.apply(
-    lambda x: (x['date'] + (
-        ((x['aux copia do indice'] + 4) % 180) * timedelta(seconds = 20))),
-        axis = 1)
-df_data = df_data.drop(columns = ['aux copia do indice'])
-df_data[['date', 'date_fixed']]
-```
-
-Uma vez tratada e sem valores repetidos, a coluna 'date_fixed' pode ser utilizada como índice do dataframe
-
-```{python}
-df_data = df_data.drop(columns = ['date'])
-df_data.set_index('date_fixed', inplace = True)
-df_data.sort_index(inplace = True)
+path_df = "../data/interim/MiningProcess_Flotation_Plant_Database.csv"
+df_data = pd.read_csv(path_df, index_col="date_fixed")
 ```
 
 ## Visualização dos dados importados
