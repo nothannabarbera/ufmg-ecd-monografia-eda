@@ -19,39 +19,10 @@ from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 ```
 
 ```{python}
-path_df = "../data/raw/datasets/edumagalhaes/" +\
-    "quality-prediction-in-a-mining-process/versions/1/" +\
-    "MiningProcess_Flotation_Plant_Database.csv"
-
-df_data = pd.read_csv(path_df, decimal=",", parse_dates=["date"])
-```
-
-
-## Colunas presentes no dataset
-```{python}
-data_start = str(df_data['date'].min())
-data_end = str(df_data['date'].max())
-
-print(f'Data inicial: {data_start}')
-print(f'Data final: {data_end}')
-```
-
-```{python}
-df_data['aux copia do indice'] = df_data.index
-df_data['date_fixed'] = df_data.apply(
-    lambda x: (x['date'] + (
-        ((x['aux copia do indice'] + 4) % 180) * timedelta(seconds = 20))),
-        axis = 1)
-df_data = df_data.drop(columns = ['aux copia do indice'])
-df_data[['date', 'date_fixed']]
-```
-
-Uma vez tratada e sem valores repetidos, a coluna 'date_fixed' pode ser utilizada como índice do dataframe
-
-```{python}
-df_data = df_data.drop(columns = ['date'])
-df_data.set_index('date_fixed', inplace = True)
-df_data.sort_index(inplace = True)
+path_df = "../data/interim/MiningProcess_Flotation_Plant_Database.csv"
+df_data = pd.read_csv(
+    path_df, index_col="date_fixed", parse_dates=["date_fixed"]
+)
 ```
 
 ## Visualização dos dados importados
@@ -81,6 +52,12 @@ df_9h_resampled = df_data[cols_9h].resample("9h").first()
 df_24h_resampled = df_data[cols_24h].resample("1d").mean()
 ```
 
+```{python}
+df_1h_resampled.to_csv("../data/interim/resampled_1h.csv")
+df_9h_resampled.to_csv("../data/interim/resampled_9h.csv")
+df_24h_resampled.to_csv("../data/interim/resampled_24h.csv")
+```
+
 Ao fazer a reamostragem para a frequência de 1 horas, ficamos com **4415** amostras da variável de interesse, a concentração de Silica no concentrado.
 
 
@@ -90,6 +67,9 @@ Ao fazer a reamostragem para a frequência de 1 horas, ficamos com **4415** amos
 
 ```{python}
 df_plot = df_1h_resampled
+
+data_start = str(df_data.index.min())
+data_end = str(df_data.index.max())
 
 plot_start = data_start #'2017-05-01 00:00:00' #
 plot_end = data_end #'2017-05-02 00:00:00'
