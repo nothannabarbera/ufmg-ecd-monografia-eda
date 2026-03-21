@@ -99,6 +99,11 @@ df_data.sort_index(inplace = True)
 df_data.head()
 ```
 
+```{python}
+# saving treated dataset to file
+df_data.to_csv(f"../data/interim/{filename}")
+```
+
 # Visualização das variáveis
 
 ## Visualização temporal
