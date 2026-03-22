@@ -1,7 +1,7 @@
 ---
 title: "EDA: Análise da concentração de Silica como série temporal"
 author: "Hanna Tatsuta Galassi"
-date: "2026-01-15"
+date: "2026-03-15"
 format: html
 toc: true
 echo: false
