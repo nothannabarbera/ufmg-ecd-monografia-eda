@@ -1,0 +1,295 @@
+---
+title: "ARIMA: Análise comparativa dos modelos candidatos"
+author: "Hanna Tatsuta Galassi"
+date: "2026-03-21"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+```{python}
+import warnings
+from typing import Dict, List, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from scipy.stats import shapiro
+from statsmodels.graphics.gofplots import qqplot
+from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
+```
+
+```{python}
+path_1h = "../data/interim/resampled_1h.csv"
+
+df_1h_resampled = pd.read_csv(
+    path_1h, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+```
+
+```{python}
+target = "% Silica Concentrate"
+```
+
+```{python}
+test_proportion = 0.2
+n_samples = len(df_1h_resampled)
+split_pos = int(n_samples * (1 - test_proportion))
+split_timestamp = df_1h_resampled.index[split_pos]
+
+df_train = df_1h_resampled[df_1h_resampled.index < split_timestamp]
+df_test = df_1h_resampled[df_1h_resampled.index >= split_timestamp]
+```
+
+```{python}
+def fit_arima_candidates(
+    series: pd.Series,
+    model_orders: List[Tuple[int, int, int]]
+) -> Tuple[pd.DataFrame, Dict[Tuple[int, int, int], ARIMAResults]]:
+    """Fit multiple ARIMA models and compare by information criteria.
+
+    Args:
+        series: Input time series as a pandas Series.
+        model_orders: List of (p, d, q) tuples representing ARIMA orders.
+
+    Returns:
+        A tuple containing:
+            - results_df: DataFrame with model order, AIC and BIC.
+            - fitted_models: Dictionary mapping (p, d, q) to ARIMAResults.
+
+    Raises:
+        ValueError: If the input series is empty or None.
+    """
+    if series is None or len(series) == 0:
+        raise ValueError("Input series is empty or None.")
+
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError("Series index must be a DatetimeIndex.")
+
+    series_clean = series.dropna()
+
+    fitted_models: Dict[Tuple[int, int, int], ARIMAResults] = {}
+    rows: List[Dict[str, float]] = []
+
+    for order in model_orders:
+        p, d, q = order
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                model = ARIMA(
+                    series_clean,
+                    order=(p, d, q),
+                    enforce_stationarity=False,
+                    enforce_invertibility=False
+                )
+                result = model.fit()
+        except Exception as exc:
+            rows.append(
+                {
+                    "p": p,
+                    "d": d,
+                    "q": q,
+                    "aic": np.nan,
+                    "bic": np.nan,
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        fitted_models[order] = result
+        rows.append(
+            {
+                "p": p,
+                "d": d,
+                "q": q,
+                "aic": result.aic,
+                "bic": result.bic,
+                "error": "",
+            }
+        )
+
+    results_df = pd.DataFrame(rows)
+    results_df = results_df.sort_values(by="aic", ascending=True)
+
+    return results_df, fitted_models
+
+
+def select_best_model_by_aic(
+    results_df: pd.DataFrame,
+    fitted_models: Dict[Tuple[int, int, int], ARIMAResults]
+) -> ARIMAResults:
+    """Select the ARIMA model with the lowest AIC.
+
+    Args:
+        results_df: DataFrame returned by fit_arima_candidates.
+        fitted_models: Dictionary of fitted ARIMA models.
+
+    Returns:
+        The ARIMAResults instance with the lowest AIC.
+
+    Raises:
+        ValueError: If no valid model is found.
+    """
+    valid_df = results_df.dropna(subset=["aic"])
+
+    if valid_df.empty:
+        raise ValueError("No valid model with finite AIC was found.")
+
+    best_row = valid_df.iloc[0]
+    best_order = (int(best_row["p"]), int(best_row["d"]), int(best_row["q"]))
+
+    if best_order not in fitted_models:
+        raise ValueError(
+            "Best model order not present in fitted_models dictionary."
+        )
+
+    return fitted_models[best_order]
+
+
+def run_residual_diagnostics(
+    model_result: ARIMAResults,
+    order: Tuple[int, int, int],
+    lags: int = 24,
+    figsize: Tuple[int, int] = (12, 8)
+) -> None:
+    """Run residual diagnostics for a fitted ARIMA model.
+
+    Diagnostics include:
+        - Residual time series.
+        - ACF of residuals.
+        - QQ plot of residuals.
+        - Histogram of residuals.
+        - Ljung-Box test (autocorrelation).
+        - Shapiro-Wilk test (normality).
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        order: Tuple (p, d, q) for the ARIMA model.
+        lags: Number of lags for ACF and Ljung-Box test.
+        figsize: Figure size for the diagnostic plots.
+
+    Returns:
+        None. Prints test results and shows plots.
+    """
+    residuals = pd.Series(model_result.resid).dropna()
+
+    lb_test = acorr_ljungbox(residuals, lags=[lags], return_df=True)
+    lb_stat = float(lb_test["lb_stat"].iloc[0])
+    lb_pvalue = float(lb_test["lb_pvalue"].iloc[0])
+
+    shapiro_stat, shapiro_pvalue = shapiro(residuals)
+
+    print("Residual diagnostics for ARIMA{}:".format(order))
+    print()
+    print("Ljung-Box test (lag = {}):".format(lags))
+    print("  Statistic: {:.4f}, p-value: {:.4f}".format(lb_stat, lb_pvalue))
+    print()
+    print("Shapiro-Wilk normality test:")
+    print(
+        "  Statistic: {:.4f}, p-value: {:.4f}".format(
+            shapiro_stat,
+            shapiro_pvalue
+        )
+    )
+    print("-" * 60)
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    residuals.plot(ax=axes[0, 0])
+    axes[0, 0].set_title("Residuals - ARIMA{}".format(order))
+    axes[0, 0].set_xlabel("Time")
+    axes[0, 0].set_ylabel("Residual")
+
+    plot_acf(residuals, lags=lags, ax=axes[0, 1])
+    axes[0, 1].set_title("ACF of residuals")
+
+    qqplot(residuals, line="s", ax=axes[1, 0])
+    axes[1, 0].set_title("QQ-plot residuals")
+
+    axes[1, 1].hist(residuals, bins=20, edgecolor="black")
+    axes[1, 1].set_title("Residuals histogram")
+    axes[1, 1].set_xlabel("Residual")
+    axes[1, 1].set_ylabel("Frequency")
+
+    plt.tight_layout()
+    plt.show()
+```
+
+```{python}
+candidate_orders = [
+    (1, 1, 1),
+    (2, 1, 1)
+]
+
+series = df_train[target].dropna()
+
+fitted_models: Dict[Tuple[int, int, int], ARIMAResults] = {}
+rows: List[Dict[str, float]] = []
+
+for order in candidate_orders:
+    p, d, q = order
+    print("=" * 80)
+    print("Fitting ARIMA{} ...".format(order))
+
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            model = ARIMA(
+                series,
+                order=(p, d, q),
+                enforce_stationarity=False,
+                enforce_invertibility=False
+            )
+            result = model.fit()
+    except Exception as exc:
+        print("  Error fitting ARIMA{}: {}".format(order, exc))
+        rows.append(
+            {
+                "p": p,
+                "d": d,
+                "q": q,
+                "aic": np.nan,
+                "bic": np.nan,
+                "error": str(exc),
+            }
+        )
+        continue
+
+    fitted_models[order] = result
+
+    aic_value = float(result.aic)
+    bic_value = float(result.bic)
+
+    print("  AIC: {:.4f}".format(aic_value))
+    print("  BIC: {:.4f}".format(bic_value))
+
+    rows.append(
+        {
+            "p": p,
+            "d": d,
+            "q": q,
+            "aic": aic_value,
+            "bic": bic_value,
+            "error": "",
+        }
+    )
+
+    run_residual_diagnostics(
+        model_result=result,
+        order=order,
+        lags=24,
+        figsize=(12, 8)
+    )
+```
+
+```{python}
+results_df = pd.DataFrame(rows)
+results_df = results_df.sort_values(by="aic", ascending=True)
+
+print("\nComparação de modelos (ordenado por AIC):")
+print(results_df)
+```
+
