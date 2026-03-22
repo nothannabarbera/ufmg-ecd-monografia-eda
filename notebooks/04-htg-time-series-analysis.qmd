@@ -1,0 +1,101 @@
+---
+title: "EDA: Análise da concentração de Silica como série temporal"
+author: "Hanna Tatsuta Galassi"
+date: "2026-01-15"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+```{python}
+from datetime import date, timedelta, datetime
+import os
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+```
+
+```{python}
+path_1h = "../data/interim/resampled_1h.csv"
+path_9h = "../data/interim/resampled_9h.csv"
+path_24h = "../data/interim/resampled_24h.csv"
+
+df_1h_resampled = pd.read_csv(
+    path_1h, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+df_9h_resampled = pd.read_csv(
+    path_9h, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+df_24h_resampled = pd.read_csv(
+    path_24h, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+```
+
+# Análise temporal 
+
+## Série original
+
+```{python}
+target = "% Silica Concentrate"
+```
+
+### ACF
+```{python}
+_ = plot_acf(df_1h_resampled[target].dropna(), lags=50)
+```
+
+A autocorrelação é alta nos primeiros lags, e decai suavemente. A ACF se aproxima de zero, mas permanece positiva e acima do limiar de significância.
+
+A série tem estrutura AR forte, provavelmente de ordem baixa, e persistência significativa.
+
+### PACF
+```{python}
+_ = plot_pacf(df_1h_resampled[target].dropna(), lags=50)
+```
+
+A PACF é alta para o lag 1, tem valores acima do patamar de significância nos lags 2 e 3, e depois fica abaixo do patamar de significância. 
+
+Isso sugere um comportamente AR(2) ou AR(3).
+
+## Diferenciação
+
+```{python}
+df_diff = df_1h_resampled[target].diff().dropna()
+```
+
+```{python}
+plt.plot(df_diff)
+```
+
+```{python}
+_ = plot_acf(df_diff, lags=50)
+```
+
+A ACF da série diferenciada apresenta um valor significativo para o lag 1 (aproximadamente -0,25), e valores baixos para os demais lags.
+
+```{python}
+_ = plot_pacf(df_diff, lags=50)
+```
+ A PACF da série diferenciada apresenta um valor significatico para os lags 1 e 2, e valores baixos para os demais lags.
+
+## Modelos candidatos
+
+Ao analisar o ACF e PACF da série original, é possível identificar os modelos ARIMA mais plausíveis para representar a dinâmica temporal da concentração de sílica.
+
+Quando se analisa a série original, observa-se que a ACF decai lentamente e permanece acima dos limites de significância, enquanto a PACF apresenta valores significativos para os lags 1, 2 e 3. Isso sugere um comportamento autorregressivo de ordem baixa.
+
+Após a diferenciação, a ACF apresenta apenas um pico significativo no lag 1, enquanto a PACF mantém significândia nos lags 1 e 2. Isso indica que a série diferenciada se comporta como um processo MA de baixa ordem. 
+
+Com base nesses padrões, é interessante considerar os seguintes modelos ARIMA:
+
+1. **ARIMA(0,1,1)**
+    A ACF da série diferenciada, com corte no lag 1, indica um processo MA(1). Considerando isso, um modelo ARIMA(0,1,1) pode representar bem o comportamento dos dados. 
+
+2. **ARIMA(1,1,1)**
+    A forte estrutura autoregressiva observada na série original (lags 1 a 3) sugere que um componente AR de ordem 1 pode permanecer mesmo após a diferenciação (o que é reforçado pelo valor significativo da PACF para lag 1 da série diferenciada).
+
+Esses modelos serão testados, de maneira a avaliar seus resíduos e os critérios de ajustes. 
