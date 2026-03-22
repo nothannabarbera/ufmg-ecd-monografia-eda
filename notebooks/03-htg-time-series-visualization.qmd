@@ -11,9 +11,11 @@ standalone: true
 ```{python}
 from datetime import date, timedelta, datetime
 import os
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 import plotly.graph_objects as go
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 ```
@@ -50,12 +52,6 @@ cols_24h = cols_1h + cols_9h
 df_1h_resampled = df_data[cols_1h].resample("1h").first()
 df_9h_resampled = df_data[cols_9h].resample("9h").first()
 df_24h_resampled = df_data[cols_24h].resample("1d").mean()
-```
-
-```{python}
-df_1h_resampled.to_csv("../data/interim/resampled_1h.csv")
-df_9h_resampled.to_csv("../data/interim/resampled_9h.csv")
-df_24h_resampled.to_csv("../data/interim/resampled_24h.csv")
 ```
 
 Ao fazer a reamostragem para a frequência de 1 horas, ficamos com **4415** amostras da variável de interesse, a concentração de Silica no concentrado.
@@ -186,3 +182,153 @@ for var in variables_to_plot:
 
     fig.show()
 ```
+
+# Busca por períodos contínuos
+
+```{python}
+def find_longest_continuous_segment(
+    series: pd.Series,
+    expected_freq: Optional[pd.Timedelta] = None
+) -> Tuple[pd.Series, pd.Timestamp, pd.Timestamp]:
+    """Find the longest continuous segment in a time series.
+
+    A "continuous" segment is defined as a sequence of non-null values where
+    the time gaps between consecutive timestamps do not exceed a given
+    expected frequency.
+
+    If expected_freq is not provided, the function will infer it from the
+    most common time delta in the index.
+
+    Args:
+        series: Pandas Series with a DatetimeIndex.
+        expected_freq: Optional expected time frequency as a pandas.Timedelta.
+            If None, it will be inferred from the index differences.
+
+    Returns:
+        A tuple containing:
+            - longest_segment: The longest continuous segment as a Series.
+            - longest_start: The start timestamp of the longest segment.
+            - longest_end: The end timestamp of the longest segment.
+
+    Raises:
+        ValueError: If the series is empty, has a non-datetime index, or if
+            the frequency cannot be inferred.
+    """
+    if series is None or len(series) == 0:
+        raise ValueError("Input series is empty or None.")
+
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError(
+            "Series index must be a DatetimeIndex."
+        )
+
+    # Remove leading and trailing NaNs but keep internal NaNs for segmentation
+    series = series.copy()
+
+    # Infer expected frequency if not provided
+    if expected_freq is None:
+        diffs = series.index.to_series().diff().dropna()
+        if diffs.empty:
+            raise ValueError(
+                "Cannot infer frequency from a single timestamp."
+            )
+        # Use the most frequent time delta as the expected frequency
+        expected_freq = diffs.mode().iloc[0]
+
+    if not isinstance(expected_freq, pd.Timedelta):
+        raise ValueError(
+            "expected_freq must be a pandas.Timedelta instance."
+        )
+
+    longest_start: Optional[pd.Timestamp] = None
+    longest_end: Optional[pd.Timestamp] = None
+    current_start: Optional[pd.Timestamp] = None
+
+    longest_length: int = 0
+
+    prev_timestamp: Optional[pd.Timestamp] = None
+
+    for timestamp, value in series.items():
+        # Break if value is NaN (interrupts the segment)
+        if pd.isna(value):
+            if current_start is not None and prev_timestamp is not None:
+                current_length = (
+                    series.loc[current_start:prev_timestamp].shape[0]
+                )
+                if current_length > longest_length:
+                    longest_length = current_length
+                    longest_start = current_start
+                    longest_end = prev_timestamp
+            current_start = None
+            prev_timestamp = None
+            continue
+
+        # Start of a new potential segment
+        if current_start is None:
+            current_start = timestamp
+            prev_timestamp = timestamp
+            continue
+
+        # Check time gap
+        if prev_timestamp is not None:
+            gap = timestamp - prev_timestamp
+            if gap > expected_freq:
+                # Close current segment
+                current_length = (
+                    series.loc[current_start:prev_timestamp].shape[0]
+                )
+                if current_length > longest_length:
+                    longest_length = current_length
+                    longest_start = current_start
+                    longest_end = prev_timestamp
+
+                # Start a new segment at current timestamp
+                current_start = timestamp
+
+        prev_timestamp = timestamp
+
+    # Check the last open segment, if any
+    if current_start is not None and prev_timestamp is not None:
+        current_length = series.loc[current_start:prev_timestamp].shape[0]
+        if current_length > longest_length:
+            longest_length = current_length
+            longest_start = current_start
+            longest_end = prev_timestamp
+
+    if longest_start is None or longest_end is None:
+        raise ValueError(
+            "No valid continuous segment found in the series."
+        )
+
+    longest_segment = series.loc[longest_start:longest_end]
+
+    return longest_segment, longest_start, longest_end
+```
+
+```{python}
+target = "% Silica Concentrate"
+
+longest_segment, longest_start, longest_end = find_longest_continuous_segment(
+    df_1h_resampled[target]
+)
+```
+
+```{python}
+print(f"Maior segmento contínuo para '{target}':")
+print(f"Início: {longest_start}")
+print(f"Final: {longest_end}")
+print(f"Comprimento: {longest_segment.shape[0]} samples")
+```
+
+```{python}
+df_1h_resampled = df_1h_resampled.loc[longest_start:longest_end]
+df_9h_resampled = df_9h_resampled.loc[longest_start:longest_end]
+df_24h_resampled = df_24h_resampled.loc[longest_start:longest_end]
+```
+
+```{python}
+df_1h_resampled.to_csv("../data/interim/resampled_1h.csv")
+df_9h_resampled.to_csv("../data/interim/resampled_9h.csv")
+df_24h_resampled.to_csv("../data/interim/resampled_24h.csv")
+```
+
