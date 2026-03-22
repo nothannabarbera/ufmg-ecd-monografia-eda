@@ -99,7 +99,7 @@ ul.task-list li input[type="checkbox"] {
 <h2 class="anchored" data-anchor-id="série-original">Série original</h2>
 <section id="acf" class="level3">
 <h3 class="anchored" data-anchor-id="acf">ACF</h3>
-<div id="46ae64ba" class="cell" data-execution_count="4">
+<div id="358f9753" class="cell" data-execution_count="4">
 <div class="cell-output cell-output-display">
 <div>
 <figure class="figure">
@@ -113,7 +113,7 @@ ul.task-list li input[type="checkbox"] {
 </section>
 <section id="pacf" class="level3">
 <h3 class="anchored" data-anchor-id="pacf">PACF</h3>
-<div id="64c142b7" class="cell" data-execution_count="5">
+<div id="c1d74336" class="cell" data-execution_count="5">
 <div class="cell-output cell-output-display">
 <div>
 <figure class="figure">
@@ -128,7 +128,7 @@ ul.task-list li input[type="checkbox"] {
 </section>
 <section id="diferenciação" class="level2">
 <h2 class="anchored" data-anchor-id="diferenciação">Diferenciação</h2>
-<div id="fd3c99b0" class="cell" data-execution_count="7">
+<div id="267462dd" class="cell" data-execution_count="7">
 <div class="cell-output cell-output-display">
 <div>
 <figure class="figure">
@@ -137,7 +137,7 @@ ul.task-list li input[type="checkbox"] {
 </div>
 </div>
 </div>
-<div id="bf07d0a0" class="cell" data-execution_count="8">
+<div id="3a7ad5c9" class="cell" data-execution_count="8">
 <div class="cell-output cell-output-display">
 <div>
 <figure class="figure">
@@ -147,7 +147,7 @@ ul.task-list li input[type="checkbox"] {
 </div>
 </div>
 <p>A ACF da série diferenciada apresenta um valor significativo para o lag 1 (aproximadamente -0,25), e valores baixos para os demais lags.</p>
-<div id="3fdd0dbc" class="cell" data-execution_count="9">
+<div id="4a62a9f2" class="cell" data-execution_count="9">
 <div class="cell-output cell-output-display">
 <div>
 <figure class="figure">
@@ -165,8 +165,8 @@ ul.task-list li input[type="checkbox"] {
 <p>Após a diferenciação, a ACF apresenta apenas um pico significativo no lag 1, enquanto a PACF mantém significândia nos lags 1 e 2. Isso indica que a série diferenciada se comporta como um processo MA de baixa ordem.</p>
 <p>Com base nesses padrões, é interessante considerar os seguintes modelos ARIMA:</p>
 <ol type="1">
-<li><p><strong>ARIMA(0,1,1)</strong> A ACF da série diferenciada, com corte no lag 1, indica um processo MA(1). Considerando isso, um modelo ARIMA(0,1,1) pode representar bem o comportamento dos dados.</p></li>
-<li><p><strong>ARIMA(1,1,1)</strong> A forte estrutura autoregressiva observada na série original (lags 1 a 3) sugere que um componente AR de ordem 1 pode permanecer mesmo após a diferenciação (o que é reforçado pelo valor significativo da PACF para lag 1 da série diferenciada).</p></li>
+<li><p><strong>ARIMA(2,1,1)</strong> A forte estrutura autoregressiva observada na série original (lags 1 a 3) sugere que um componente AR de ordem 1 pode permanecer mesmo após a diferenciação (o que é reforçado pelo valor significativo da PACF para lags 1 e 2 da série diferenciada).</p></li>
+<li><p><strong>ARIMA(1,1,1)</strong> Considerando que, para a série diferenciada, a PACF do lag 2 tem valor visivelmente menor do que a PACF do lag 1, é possível que um modelo AR(1) ao invés de AR(2) ainda apresente um bom ajuste aos dados, com uma complexidade menor.</p></li>
 </ol>
 <p>Esses modelos serão testados, de maneira a avaliar seus resíduos e os critérios de ajustes.</p>
 </section>

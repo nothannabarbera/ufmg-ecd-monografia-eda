@@ -92,10 +92,10 @@ Após a diferenciação, a ACF apresenta apenas um pico significativo no lag 1, 
 
 Com base nesses padrões, é interessante considerar os seguintes modelos ARIMA:
 
-1. **ARIMA(0,1,1)**
-    A ACF da série diferenciada, com corte no lag 1, indica um processo MA(1). Considerando isso, um modelo ARIMA(0,1,1) pode representar bem o comportamento dos dados. 
+1. **ARIMA(2,1,1)**
+    A forte estrutura autoregressiva observada na série original (lags 1 a 3) sugere que um componente AR de ordem 1 pode permanecer mesmo após a diferenciação (o que é reforçado pelo valor significativo da PACF para lags 1 e 2 da série diferenciada).
 
 2. **ARIMA(1,1,1)**
-    A forte estrutura autoregressiva observada na série original (lags 1 a 3) sugere que um componente AR de ordem 1 pode permanecer mesmo após a diferenciação (o que é reforçado pelo valor significativo da PACF para lag 1 da série diferenciada).
+    Considerando que, para a série diferenciada, a PACF do lag 2 tem valor visivelmente menor do que a PACF do lag 1, é possível que um modelo AR(1) ao invés de AR(2) ainda apresente um bom ajuste aos dados, com uma complexidade menor. 
 
 Esses modelos serão testados, de maneira a avaliar seus resíduos e os critérios de ajustes. 
