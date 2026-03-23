@@ -10,16 +10,18 @@ standalone: true
 
 ```{python}
 import warnings
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 from scipy.stats import shapiro
 from statsmodels.graphics.gofplots import qqplot
 from statsmodels.graphics.tsaplots import plot_acf
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 ```
 
 ```{python}
@@ -216,80 +218,382 @@ def run_residual_diagnostics(
 
     plt.tight_layout()
     plt.show()
-```
 
-```{python}
-candidate_orders = [
-    (1, 1, 1),
-    (2, 1, 1)
-]
 
-series = df_train[target].dropna()
+def compute_regression_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    prefix: str = ""
+) -> Dict[str, float]:
+    """Compute common regression metrics for time series.
 
-fitted_models: Dict[Tuple[int, int, int], ARIMAResults] = {}
-rows: List[Dict[str, float]] = []
+    The function calculates MAE, RMSE and MAPE. It expects y_true and
+    y_pred to be aligned on the same index.
 
-for order in candidate_orders:
-    p, d, q = order
-    print("=" * 80)
-    print("Fitting ARIMA{} ...".format(order))
+    Args:
+        y_true: True target values as a pandas Series.
+        y_pred: Predicted target values as a pandas Series.
+        prefix: Optional prefix to add to each metric name in the
+            returned dictionary (for example "train_" or "test_").
 
-    try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore")
-            model = ARIMA(
-                series,
-                order=(p, d, q),
-                enforce_stationarity=False,
-                enforce_invertibility=False
-            )
-            result = model.fit()
-    except Exception as exc:
-        print("  Error fitting ARIMA{}: {}".format(order, exc))
-        rows.append(
-            {
-                "p": p,
-                "d": d,
-                "q": q,
-                "aic": np.nan,
-                "bic": np.nan,
-                "error": str(exc),
-            }
+    Returns:
+        Dictionary with metrics as keys and their values as floats.
+
+    Raises:
+        ValueError: If y_true and y_pred do not have the same length
+            or if y_true contains only zeros when computing MAPE.
+        TypeError: If y_true or y_pred are not pandas Series.
+    """
+    if not isinstance(y_true, pd.Series):
+        raise TypeError("Parameter 'y_true' must be a pandas Series.")
+    if not isinstance(y_pred, pd.Series):
+        raise TypeError("Parameter 'y_pred' must be a pandas Series.")
+
+    if len(y_true) != len(y_pred):
+        raise ValueError(
+            "y_true and y_pred must have the same length."
         )
-        continue
 
-    fitted_models[order] = result
+    # Align indices just in case
+    y_true, y_pred = y_true.align(y_pred, join="inner")
 
-    aic_value = float(result.aic)
-    bic_value = float(result.bic)
+    mae = mean_absolute_error(y_true, y_pred)
 
-    print("  AIC: {:.4f}".format(aic_value))
-    print("  BIC: {:.4f}".format(bic_value))
+    # Older versions of scikit-learn do not support 'squared' argument,
+    # so we compute RMSE manually as the square root of MSE.
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = float(np.sqrt(mse))
 
-    rows.append(
-        {
-            "p": p,
-            "d": d,
-            "q": q,
-            "aic": aic_value,
-            "bic": bic_value,
-            "error": "",
-        }
+    if np.any(y_true == 0):
+        raise ValueError(
+            "MAPE is undefined when y_true contains zeros."
+        )
+
+    mape = float(
+        np.mean(np.abs((y_true - y_pred) / y_true)) * 100.0
     )
 
-    run_residual_diagnostics(
-        model_result=result,
-        order=order,
-        lags=24,
-        figsize=(12, 8)
+    metrics: Dict[str, float] = {
+        f"{prefix}mae": float(mae),
+        f"{prefix}rmse": rmse,
+        f"{prefix}mape": mape,
+    }
+
+    return metrics
+
+
+def summarize_arima_model(
+    model_result: ARIMAResults,
+    model_name: str,
+    y_train: Optional[pd.Series] = None,
+    y_test: Optional[pd.Series] = None,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None
+) -> pd.DataFrame:
+    """Create a summary table with ARIMA information and metrics.
+
+    This function gathers AIC, BIC and (optionally) regression metrics
+    for train and test sets.
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        model_name: Name or identifier of the model, for example
+            "ARIMA(1,1,1)".
+        y_train: True target values for the training set.
+        y_test: True target values for the test set.
+        y_pred_train: Predicted values on the training set.
+        y_pred_test: Predicted values on the test set.
+
+    Returns:
+        A pandas DataFrame with one row containing model name, AIC, BIC
+        and available metrics (train_*, test_*).
+
+    Raises:
+        AttributeError: If the model does not provide aic or bic
+            attributes.
+    """
+    if not hasattr(model_result, "aic") or not hasattr(
+        model_result,
+        "bic",
+    ):
+        raise AttributeError(
+            "Model must have 'aic' and 'bic' attributes."
+        )
+
+    data: Dict[str, float] = {
+        "model": model_name,
+        "aic": float(model_result.aic),
+        "bic": float(model_result.bic),
+    }
+
+    if y_train is not None and y_pred_train is not None:
+        train_metrics = compute_regression_metrics(
+            y_true=y_train,
+            y_pred=y_pred_train,
+            prefix="train_",
+        )
+        data.update(train_metrics)
+
+    if y_test is not None and y_pred_test is not None:
+        test_metrics = compute_regression_metrics(
+            y_true=y_test,
+            y_pred=y_pred_test,
+            prefix="test_",
+        )
+        data.update(test_metrics)
+
+    summary_df = pd.DataFrame([data])
+
+    return summary_df
+
+
+def plot_arima_diagnostics(
+    model_result: ARIMAResults,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (10, 8)
+) -> None:
+    """Plot standard ARIMA diagnostic charts.
+
+    This function is a thin wrapper around the model's
+    plot_diagnostics method, adding a customized main title.
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        model_name: Name of the model to show in the figure title.
+        figsize: Size of the figure in inches (width, height).
+
+    Raises:
+        AttributeError: If the model does not provide plot_diagnostics.
+    """
+    if not hasattr(model_result, "plot_diagnostics"):
+        raise AttributeError(
+            "Model does not have 'plot_diagnostics' method."
+        )
+
+    fig = model_result.plot_diagnostics(figsize=figsize)
+    if model_name:
+        fig.suptitle(
+            f"Diagnostics - {model_name}",
+            fontsize=14,
+            y=1.02,
+        )
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_forecast_vs_actual(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (12, 6)
+) -> None:
+    """Plot actual and predicted values for train and test sets.
+
+    The function draws the full time series from train and test, and
+    overlays the predictions if they are provided. The plot is
+    generated using Plotly.
+
+    Args:
+        y_train: True target values for the training period.
+        y_test: True target values for the test period.
+        y_pred_train: Predicted values for the training period.
+        y_pred_test: Predicted values for the test period.
+        model_name: Name of the model to show in the title.
+        figsize: Size of the figure in inches (width, height). This
+            argument is kept for compatibility, although Plotly uses
+            pixel-based sizing.
+
+    Raises:
+        TypeError: If y_train or y_test are not pandas Series.
+    """
+    if not isinstance(y_train, pd.Series):
+        raise TypeError("Parameter 'y_train' must be a pandas Series.")
+    if not isinstance(y_test, pd.Series):
+        raise TypeError("Parameter 'y_test' must be a pandas Series.")
+
+    # Convert figsize (inches) roughly to pixels for plotly
+    width_px = int(figsize[0] * 80)
+    height_px = int(figsize[1] * 80)
+
+    fig = go.Figure()
+
+    # Train actual
+    fig.add_trace(
+        go.Scatter(
+            x=y_train.index,
+            y=y_train.values,
+            mode="lines",
+            name="Train (actual)",
+            line=dict(color="blue"),
+        )
     )
+
+    # Test actual
+    fig.add_trace(
+        go.Scatter(
+            x=y_test.index,
+            y=y_test.values,
+            mode="lines",
+            name="Test (actual)",
+            line=dict(color="orange"),
+        )
+    )
+
+    # Train predicted
+    if y_pred_train is not None:
+        y_pred_train = y_pred_train.reindex(y_train.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_train.index,
+                y=y_pred_train.values,
+                mode="lines",
+                name="Train (predicted)",
+                line=dict(color="green", dash="dash"),
+            )
+        )
+
+    # Test predicted
+    if y_pred_test is not None:
+        y_pred_test = y_pred_test.reindex(y_test.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_test.index,
+                y=y_pred_test.values,
+                mode="lines",
+                name="Test (predicted)",
+                line=dict(color="red", dash="dash"),
+            )
+        )
+
+    title = "Actual vs. Predicted"
+    if model_name:
+        title += f" - {model_name}"
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Time",
+        yaxis_title=target,
+        width=width_px,
+        height=height_px,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+        ),
+        template="plotly_white",
+    )
+
+    fig.show()
 ```
 
 ```{python}
-results_df = pd.DataFrame(rows)
-results_df = results_df.sort_values(by="aic", ascending=True)
-
-print("\nComparação de modelos (ordenado por AIC):")
-print(results_df)
+series = df_train[target].dropna()
+y_train = df_train[target].dropna()
+y_test = df_test[target].dropna()
 ```
 
+```{python}
+
+print("=" * 80)
+print("Fitting ARIMA(1,1,1)...")
+
+model1 = ARIMA(y_train, order=(1, 1, 1)).fit()
+
+print("AIC:", model1.aic)
+print("BIC:", model1.bic)
+print(model1.summary())
+
+y_pred_train_1 = model1.predict(
+    start=y_train.index[0],
+    end=y_train.index[-1],
+)
+y_pred_test_1 = model1.predict(
+    start=y_test.index[0],
+    end=y_test.index[-1],
+)
+
+summary1 = summarize_arima_model(
+    model_result=model1,
+    model_name="ARIMA(1,1,1)",
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_1,
+    y_pred_test=y_pred_test_1,
+)
+print()
+print("Summary metrics - ARIMA(1,1,1):")
+print(summary1)
+
+plot_arima_diagnostics(
+    model_result=model1,
+    model_name="ARIMA(1,1,1)",
+    figsize=(10, 8),
+)
+
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_1,
+    y_pred_test=y_pred_test_1,
+    model_name="ARIMA(1,1,1)",
+    figsize=(12, 6),
+)
+```
+
+```{python}
+print("=" * 80)
+print("Fitting ARIMA(2,1,1)...")
+
+model2 = ARIMA(y_train, order=(2, 1, 1)).fit()
+
+print("AIC:", model2.aic)
+print("BIC:", model2.bic)
+print(model2.summary())
+
+y_pred_train_2 = model2.predict(
+    start=y_train.index[0],
+    end=y_train.index[-1],
+)
+y_pred_test_2 = model2.predict(
+    start=y_test.index[0],
+    end=y_test.index[-1],
+)
+
+summary2 = summarize_arima_model(
+    model_result=model2,
+    model_name="ARIMA(2,1,1)",
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_2,
+    y_pred_test=y_pred_test_2,
+)
+print()
+print("Summary metrics - ARIMA(2,1,1):")
+print(summary2)
+
+plot_arima_diagnostics(
+    model_result=model2,
+    model_name="ARIMA(2,1,1)",
+    figsize=(10, 8),
+)
+
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_2,
+    y_pred_test=y_pred_test_2,
+    model_name="ARIMA(2,1,1)",
+    figsize=(12, 6),
+)
+```
+
+## Análise (reescrever)
+A comparação entre os modelos ARIMA aplicados à série % Silica Concentrate indicou que o ARIMA(2,1,1) apresenta desempenho superior ao ARIMA(1,1,1), tanto pelos critérios de informação (AIC) quanto pelas métricas de erro. Contudo, a análise detalhada dos resíduos mostrou que, embora este modelo represente avanço significativo, ainda não atende plenamente às premissas fundamentais da modelagem ARIMA.
+Os resíduos do ARIMA(2,1,1) apresentaram redução expressiva na autocorrelação quando comparados ao ARIMA(1,1,1), evidenciando que parte relevante da dependência temporal foi capturada. O correlograma apresentou amplitudes menores e o teste de Ljung-Box exibiu estatísticas reduzidas, embora ainda suficientes para rejeitar a hipótese de ruído branco. Essa persistência de autocorrelação residual indica que há estruturas dinâmicas no processo que não são completamente representadas pelo modelo linear clássico.
+Do ponto de vista da normalidade, os resíduos continuam apresentando assimetrias e caudas mais pesadas do que o esperado, conforme evidenciado pelos QQ-plots e pelo teste de Shapiro-Wilk. Embora o ARIMA(2,1,1) tenha reduzido parcialmente esses desvios, o comportamento não gaussiano permanece uma limitação importante, especialmente quando se considera a construção de intervalos de confiança e a robustez das inferências.
+Além disso, a análise visual da variância residual sugeriu presença de heterocedasticidade, com episódios de maior dispersão associados a períodos específicos da série. Essa característica indica que a variabilidade do processo não é constante ao longo do tempo, o que viola outra premissa fundamental do modelo ARIMA. O processo industrial em questão — sujeito a oscilações operacionais e mudanças abruptas — tende naturalmente a produzir resíduos com variância dependente do estado do sistema.
+Assim, embora o ARIMA(2,1,1) se destaque entre os modelos avaliados e ofereça previsões mais consistentes, as limitações observadas na normalidade e homoscedasticidade dos resíduos sugerem que o modelo ainda não captura completamente as características estocásticas do processo. Diante disso, torna-se necessário avançar para abordagens capazes de lidar explicitamente com erros dependentes do tempo e com variância não constante. Nesse contexto, o próximo passo desta pesquisa será a aplicação de um modelo GLARMA (Generalized Linear Autoregressive Moving Average), que incorpora componentes autoregressivos nos resíduos e permite modelar estruturas de dispersão e distribuições não gaussianas. Essa abordagem tem potencial para corrigir as limitações identificadas e fornecer um ajuste mais adequado às particularidades da série analisada.
