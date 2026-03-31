@@ -1,5 +1,5 @@
 # Virtual environment files
-/env/
+/.venv/
 
 # Data files
 /data/raw/
