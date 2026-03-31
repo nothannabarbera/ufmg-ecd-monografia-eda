@@ -488,6 +488,132 @@ def plot_forecast_vs_actual(
     )
 
     fig.show()
+
+
+
+def _infer_and_set_frequency(series: pd.Series) -> pd.Series:
+    """Ensure a datetime-indexed series has a frequency when possible.
+
+    Args:
+        series: Input time series with DatetimeIndex.
+
+    Returns:
+        Series with inferred frequency set when it can be inferred.
+
+    Raises:
+        TypeError: If series is not a pandas Series.
+        ValueError: If series index is not a DatetimeIndex.
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError("Parameter 'series' must be a pandas Series.")
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError("Series index must be a DatetimeIndex.")
+
+    if series.index.freq is not None:
+        return series
+
+    inferred = pd.infer_freq(series.index)
+    if inferred is None:
+        return series
+
+    # Do not reindex; only attach the freq metadata to avoid changing data.
+    series = series.copy()
+    series.index = pd.DatetimeIndex(series.index.values, freq=inferred)
+    return series
+
+
+def rolling_forecast_arima(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    order: Tuple[int, int, int],
+    *,
+    use_actual: bool = True,
+    refit: bool = False,
+    enforce_stationarity: bool = False,
+    enforce_invertibility: bool = False,
+) -> pd.Series:
+    """Compute a rolling (walk-forward) forecast for an ARIMA model.
+
+    At each step t in the test set:
+        - Fit/keep a model on data available up to t-1
+        - Forecast 1-step ahead for t
+        - Update the model with either:
+            * the actual y_test[t] (use_actual=True), or
+            * the predicted value (use_actual=False)
+
+    This avoids "frozen" predictions and simulates operational usage.
+
+    Args:
+        y_train: Training target series.
+        y_test: Test target series.
+        order: ARIMA order (p, d, q).
+        use_actual: If True, update with the real observation at each step.
+            If False, update with the predicted value (recursive forecast).
+        refit: If True, refit parameters when updating (slower, sometimes
+            improves accuracy). If False, only update state when supported.
+        enforce_stationarity: Passed to ARIMA constructor.
+        enforce_invertibility: Passed to ARIMA constructor.
+
+    Returns:
+        A pandas Series of rolling predictions aligned to y_test.index.
+
+    Raises:
+        ValueError: If y_train or y_test are empty.
+    """
+    if y_train is None or len(y_train) == 0:
+        raise ValueError("y_train is empty.")
+    if y_test is None or len(y_test) == 0:
+        raise ValueError("y_test is empty.")
+
+    y_train = _infer_and_set_frequency(y_train.dropna())
+    y_test = _infer_and_set_frequency(y_test.dropna())
+
+    history = y_train.copy()
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore")
+        result: ARIMAResults = ARIMA(
+            history,
+            order=order,
+            enforce_stationarity=enforce_stationarity,
+            enforce_invertibility=enforce_invertibility,
+        ).fit()
+
+    preds: List[float] = []
+
+    for ts in y_test.index:
+        # 1-step ahead forecast from the current state
+        fc = result.get_forecast(steps=1).predicted_mean.iloc[0]
+        preds.append(float(fc))
+
+        # Choose what we "observe" at this timestamp
+        new_value = float(y_test.loc[ts]) if use_actual else float(fc)
+
+        # Update model state with new observation when possible
+        can_append = hasattr(result, "append")
+        if can_append:
+            # append expects array-like endog; keep as list to preserve shape
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                result = result.append([new_value], refit=refit)
+        else:
+            # Fallback: refit from scratch (slower, but always works)
+            history = pd.concat([history, pd.Series([new_value], index=[ts])])
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                result = ARIMA(
+                    history,
+                    order=order,
+                    enforce_stationarity=enforce_stationarity,
+                    enforce_invertibility=enforce_invertibility,
+                ).fit()
+
+        # Keep a consistent history index if we are refitting in fallback mode
+        if not can_append:
+            history = _infer_and_set_frequency(history)
+
+    y_pred = pd.Series(preds, index=y_test.index, name="y_pred_rolling")
+    return y_pred
 ```
 
 ```{python}
@@ -533,15 +659,6 @@ plot_arima_diagnostics(
     model_name="ARIMA(1,1,1)",
     figsize=(10, 8),
 )
-
-plot_forecast_vs_actual(
-    y_train=y_train,
-    y_test=y_test,
-    y_pred_train=y_pred_train_1,
-    y_pred_test=y_pred_test_1,
-    model_name="ARIMA(1,1,1)",
-    figsize=(12, 6),
-)
 ```
 
 ```{python}
@@ -580,16 +697,49 @@ plot_arima_diagnostics(
     model_name="ARIMA(2,1,1)",
     figsize=(10, 8),
 )
+```
 
+```{python}
+order_best = (2, 1, 1)
+
+# (Opcional) Rolling recursivo: atualiza com a própria previsão (simula produção)
+y_pred_test_recursive = rolling_forecast_arima(
+    y_train=y_train,
+    y_test=y_test,
+    order=order_best,
+    use_actual=True,
+    refit=False,
+)
+
+# Se quiser manter também previsão "normal" para comparar:
+model_best = ARIMA(y_train, order=order_best).fit()
+y_pred_train_best = model_best.predict(
+    start=y_train.index[0],
+    end=y_train.index[-1],
+)
+
+# Plote usando seu helper atual:
 plot_forecast_vs_actual(
     y_train=y_train,
     y_test=y_test,
-    y_pred_train=y_pred_train_2,
-    y_pred_test=y_pred_test_2,
-    model_name="ARIMA(2,1,1)",
+    y_pred_train=y_pred_train_best,
+    y_pred_test=y_pred_test_recursive,   # <= rolling aqui
+    model_name="ARIMA(2,1,1) - rolling (walk-forward)",
     figsize=(12, 6),
 )
+
+# Métricas no teste para o rolling:
+summary_roll = summarize_arima_model(
+    model_result=model_best,
+    model_name="ARIMA(2,1,1)",
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_best,
+    y_pred_test=y_pred_test_recursive,
+)
+print(summary_roll)
 ```
+
 
 ## Análise (reescrever)
 A comparação entre os modelos ARIMA aplicados à série % Silica Concentrate indicou que o ARIMA(2,1,1) apresenta desempenho superior ao ARIMA(1,1,1), tanto pelos critérios de informação (AIC) quanto pelas métricas de erro. Contudo, a análise detalhada dos resíduos mostrou que, embora este modelo represente avanço significativo, ainda não atende plenamente às premissas fundamentais da modelagem ARIMA.
