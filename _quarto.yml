@@ -1,0 +1,7 @@
+project:
+  type: default
+
+execute:
+  freeze: false
+  
+execute-dir: project
