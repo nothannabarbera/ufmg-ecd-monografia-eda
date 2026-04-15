@@ -1,0 +1,872 @@
+---
+title: "GLARMA: Desenvolvimento de modelo para distribuição Gamma"
+author: "Hanna Tatsuta Galassi"
+date: "2026-03-31"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+# Definição do modelo
+
+## Função de ligação
+
+Para relacionar a média condicional $\mu_t$​ ao preditor linear, foi utilizada a função de ligação logarítmica, definida por:
+
+$$
+g(\mu_t) = \log(\mu_t)
+$$
+
+Essa escolha assegura que as estimativas da média sejam sempre estritamente positivas, além de ser adequada para modelar relações multiplicativas e assimetrias comuns em dados industriais.
+
+## Estrutura do preditor linear
+
+O preditor linear do modelo é definido como:
+
+$$
+\eta_t = \log(\mu_t) = \beta_0 + Z_t
+$$
+
+onde $\beta_0$​ representa o termo de intercepto e $Z_t$​ é um processo estocástico que captura a dependência temporal remanescente por meio de uma estrutura autorregressiva e de média móvel.
+
+Neste estudo, $Z_t$​ é modelado como um processo ARMA(2,1), dado por:
+
+$$
+Z_t = \phi_1 Z_{t-1} + \phi_2 Z_{t-2} + \theta_1 \varepsilon_{t-1} + \varepsilon_t
+$$
+
+em que:
+
+- $\phi_1$​ e $\phi_2$​ são os parâmetros autorregressivos,
+- $\theta_1$​ é o parâmetro de média móvel,
+- $\varepsilon_t$​ é um termo de erro com média zero e variância constante no espaço do preditor linear.
+
+Essa formulação permite que a dinâmica temporal da série seja capturada diretamente no preditor linear, em vez de ser modelada no espaço original da variável resposta, como ocorre nos modelos ARIMA tradicionais.
+
+## Forma final do modelo
+
+Combinando as componentes descritas, o modelo GLARMA utilizado pode ser expresso como:
+
+$$
+\log(\mu_t) = \beta_0
++ \phi_1 Z_{t-1}
++ \phi_2 Z_{t-2}
++ \theta_1 \varepsilon_{t-1}
++ \varepsilon_t
+$$
+
+com:
+
+$$
+Y_t \mid \mathcal{F}_{t-1} \sim \text{Gamma}(\mu_t, \phi)
+$$
+
+
+# Modelo ajustado
+
+```{python}
+import warnings
+from typing import Optional, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.stattools import acf
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from scipy.stats import jarque_bera
+from scipy import stats
+```
+
+```{python}
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message="Series.__getitem__ treating keys as positions is deprecated"
+)
+```
+
+```{python}
+path_train = "../data/processed/train.csv"
+path_test = "../data/processed/test.csv"
+
+df_train = pd.read_csv(
+    path_train, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+df_test = pd.read_csv(
+    path_test, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+```
+
+```{python}
+def prepare_gamma_target(
+    series: pd.Series,
+    epsilon: float = 1e-6,
+) -> pd.Series:
+    """Prepare a target series for Gamma-family models.
+
+    Ensures strictly positive values by applying a small shift if needed.
+
+    Args:
+        series: Input target series.
+        epsilon: Small positive constant added when zeros are present.
+
+    Returns:
+        A strictly positive pandas Series.
+
+    Raises:
+        ValueError: If series is empty or contains negative values.
+    """
+    if series is None or series.empty:
+        raise ValueError("Input series is empty.")
+
+    if (series < 0).any():
+        raise ValueError(
+            "Gamma distribution does not support negative values."
+        )
+
+    series = series.copy()
+
+    if (series == 0).any():
+        series = series + epsilon
+
+    return series
+
+
+def plot_forecast_vs_actual(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None,
+    y_pred_test_lower: Optional[pd.Series] = None,
+    y_pred_test_upper: Optional[pd.Series] = None,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (12, 6)
+) -> None:
+    """Plot actual and predicted values for train and test sets with confidence intervals.
+
+    The function draws the full time series from train and test, and
+    overlays the predictions if they are provided. Confidence intervals
+    are shown as shaded bands for the test set. The plot is
+    generated using Plotly with legend interaction enabled.
+
+    Args:
+        y_train: True target values for the training period.
+        y_test: True target values for the test period.
+        y_pred_train: Predicted values for the training period.
+        y_pred_test: Predicted values for the test period.
+        y_pred_test_lower: Lower confidence interval for test predictions.
+        y_pred_test_upper: Upper confidence interval for test predictions.
+        model_name: Name of the model to show in the title.
+        figsize: Size of the figure in inches (width, height).
+
+    Raises:
+        TypeError: If y_train or y_test are not pandas Series.
+    """
+    if not isinstance(y_train, pd.Series):
+        raise TypeError("Parameter 'y_train' must be a pandas Series.")
+    if not isinstance(y_test, pd.Series):
+        raise TypeError("Parameter 'y_test' must be a pandas Series.")
+
+    # Convert figsize (inches) roughly to pixels for plotly
+    width_px = int(figsize[0] * 80)
+    height_px = int(figsize[1] * 80)
+
+    fig = go.Figure()
+
+    # Train actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_train.index,
+            y=y_train.values,
+            mode="lines",
+            name="Train (actual)",
+            line=dict(color="black", width=2),
+        )
+    )
+
+    # Test actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_test.index,
+            y=y_test.values,
+            mode="lines",
+            name="Test (actual)",
+            line=dict(color="black", width=2),
+        )
+    )
+
+    # Train predicted (blue dashed - GLARMA)
+    if y_pred_train is not None:
+        y_pred_train = y_pred_train.reindex(y_train.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_train.index,
+                y=y_pred_train.values,
+                mode="lines",
+                name="Train (predicted)",
+                line=dict(color="royalblue", dash="dash"),
+            )
+        )
+
+    # Test predicted confidence interval (light blue band)
+    if y_pred_test_upper is not None and y_pred_test_lower is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_test_upper.index.tolist() + y_pred_test_lower.index.tolist()[::-1],
+                y=y_pred_test_upper.values.tolist() + y_pred_test_lower.values.tolist()[::-1],
+                fill="toself",
+                fillcolor="rgba(65, 105, 225, 0.2)",  # Light royalblue with transparency
+                line=dict(color="rgba(255,255,255,0)"),
+                showlegend=True,
+                name="95% CI",
+            )
+        )
+
+    # Test predicted (blue dashed - GLARMA)
+    if y_pred_test is not None:
+        y_pred_test = y_pred_test.reindex(y_test.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_test.index,
+                y=y_pred_test.values,
+                mode="lines",
+                name="Test (predicted)",
+                line=dict(color="royalblue", dash="dash"),
+            )
+        )
+
+    title = "Actual vs. Predicted"
+    if model_name:
+        title += f" - {model_name}"
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Time",
+        yaxis_title=target,
+        width=width_px,
+        height=height_px,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+        ),
+        template="plotly_white",
+        hovermode="x unified",
+    )
+
+    # Adicionar destaque cinza para o período de testes
+    fig.add_vrect(
+        x0=y_test.index[0],
+        x1=y_test.index[-1],
+        fillcolor="lightgray",
+        opacity=0.2,
+        layer="below",
+        line_width=0,
+    )
+
+    fig.show()
+
+
+def rolling_prediction_glarma_like_train(
+    result,
+    y_train: pd.Series,
+) -> pd.Series:
+    """Compute in-sample rolling 1-step-ahead predictions for training data.
+
+    Each prediction at time t is based only on information up to t-1,
+    ensuring a fair comparison with rolling forecasts on the test set.
+    """
+    predictions = []
+
+    for t in range(1, len(y_train)):
+        pred = result.get_prediction(
+            start=y_train.index[t],
+            end=y_train.index[t],
+            dynamic=y_train.index[t - 1],
+        ).predicted_mean.iloc[0]
+
+        predictions.append(float(np.exp(pred)))
+
+    predictions = [np.nan] + predictions
+
+    return pd.Series(
+        predictions,
+        index=y_train.index,
+        name="glarma_like_train_pred",
+    )
+
+
+def rolling_forecast_glarma_like(
+    result,
+    y_train: pd.Series,
+    y_test: pd.Series,
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """Rolling 1-step-ahead forecast for GLARMA-like Gamma(log) model.
+    
+    Returns: (predictions, lower_conf, upper_conf)
+    """
+    predictions = []
+    lower_bounds = []
+    upper_bounds = []
+    current_result = result
+
+    for t in range(len(y_test)):
+        # 1-step-ahead forecast with confidence intervals (log-scale)
+        forecast_obj = current_result.get_forecast(steps=1)
+        pred_log = forecast_obj.predicted_mean.iloc[0]
+        
+        # Confidence interval (default 95%)
+        conf_int = forecast_obj.conf_int().iloc[0]
+        lower_log = conf_int[0]
+        upper_log = conf_int[1]
+        
+        # Convert from log scale back to original scale
+        predictions.append(float(np.exp(pred_log)))
+        lower_bounds.append(float(np.exp(lower_log)))
+        upper_bounds.append(float(np.exp(upper_log)))
+
+        # Atualiza o estado com o valor observado
+        observed_log = np.log(y_test.iloc[t])
+        current_result = current_result.append(
+            [observed_log],
+            refit=False,
+        )
+
+    return (
+        pd.Series(predictions, index=y_test.index, name="glarma_pred"),
+        pd.Series(lower_bounds, index=y_test.index, name="glarma_lower"),
+        pd.Series(upper_bounds, index=y_test.index, name="glarma_upper"),
+    )
+
+
+def compute_glarma_residuals(
+    result,
+    y: pd.Series,
+) -> pd.Series:
+    """Compute residuals for GLARMA-like Gamma(log) model.
+
+    Residuals are computed in the linear predictor (log) scale:
+    residual_t = log(y_t) - E[log(y_t) | F_{t-1}]
+    """
+    y_log = np.log(y)
+
+    fitted_log = result.fittedvalues.reindex(y.index)
+
+    residuals = y_log - fitted_log
+
+    return pd.Series(
+        residuals,
+        index=y.index,
+        name="glarma_residuals_log",
+    )
+
+
+
+
+
+def residuals_diagnostics(
+    residuals: pd.Series,
+    lags: int = 10,
+) -> pd.DataFrame:
+    """Statistical diagnostics for GLARMA residuals."""
+    res = residuals.dropna()
+
+    # Ljung-Box test
+    lb = acorr_ljungbox(res, lags=[lags], return_df=True)
+
+    # Jarque-Bera test (SciPy >= 1.8)
+    jb_stat, jb_p = jarque_bera(res)
+
+    return pd.DataFrame(
+        {
+            "Statistic": [
+                lb["lb_stat"].iloc[0],
+                jb_stat,
+            ],
+            "p-value": [
+                lb["lb_pvalue"].iloc[0],
+                jb_p,
+            ],
+        },
+        index=[
+            f"Ljung-Box (lag {lags})",
+            "Jarque-Bera",
+        ],
+    )
+
+
+def calculate_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+) -> pd.DataFrame:
+    """Calculate MAE, RMSE, and MAPE metrics.
+
+    Args:
+        y_true: Actual values.
+        y_pred: Predicted values.
+
+    Returns:
+        DataFrame with metrics.
+    """
+    # Align indices and remove NaN values
+    aligned_true = y_true.reindex(y_pred.index)
+    valid_mask = ~(aligned_true.isna() | y_pred.isna())
+    
+    y_true_clean = aligned_true[valid_mask]
+    y_pred_clean = y_pred[valid_mask]
+
+    # MAE: Mean Absolute Error
+    mae = np.mean(np.abs(y_true_clean - y_pred_clean))
+
+    # RMSE: Root Mean Squared Error
+    rmse = np.sqrt(np.mean((y_true_clean - y_pred_clean) ** 2))
+
+    # MAPE: Mean Absolute Percentage Error
+    mape = np.mean(np.abs((y_true_clean - y_pred_clean) / y_true_clean)) * 100
+
+    return pd.DataFrame(
+        {
+            "Metric": ["MAE", "RMSE", "MAPE (%)"],
+            "Value": [mae, rmse, mape],
+        }
+    )
+
+
+def plot_glarma_diagnostics(
+    residuals: pd.Series,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (10, 8),
+    nlags: int = 40,
+) -> None:
+    """Plot diagnostic panel for GLARMA-like Gamma(log) model residuals using matplotlib.
+
+    The panel includes:
+    1) Residuals over time
+    2) Histogram of residuals
+    3) ACF of residuals
+    4) Q–Q plot
+
+    Args:
+        residuals: Residuals in log-scale.
+        model_name: Name of the model for the title.
+        figsize: Size of the figure in inches (width, height).
+        nlags: Number of lags for ACF.
+    """
+    res = residuals.dropna()
+
+    # Calculate ACF
+    acf_vals = acf(res, nlags=nlags, fft=True)
+    conf = 1.96 / np.sqrt(len(res))
+
+    # Calculate Q-Q plot
+    qq = stats.probplot(res, dist="norm")
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig.suptitle(
+        f"Diagnostics - {model_name}" if model_name else "Diagnostics",
+        fontsize=14,
+        y=1.00,
+    )
+
+    # 1) Residuals over time
+    axes[0, 0].plot(res.index, res.values, lw=1)
+    axes[0, 0].axhline(y=0, color="r", linestyle="--", lw=1)
+    axes[0, 0].set_title("Residuals over time")
+    axes[0, 0].set_ylabel("Residual (log scale)")
+    axes[0, 0].tick_params(axis='x', rotation=45)
+    plt.setp(axes[0, 0].xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    # 2) Histogram
+    axes[0, 1].hist(res.values, bins=30, edgecolor="black", alpha=0.7)
+    axes[0, 1].set_title("Histogram of residuals")
+    axes[0, 1].set_xlabel("Residual")
+    axes[0, 1].set_ylabel("Frequency")
+
+    # 3) ACF
+    axes[1, 0].bar(range(len(acf_vals)), acf_vals, width=0.5)
+    axes[1, 0].axhline(y=conf, color="r", linestyle="--", lw=1)
+    axes[1, 0].axhline(y=-conf, color="r", linestyle="--", lw=1)
+    axes[1, 0].set_title("ACF of residuals")
+    axes[1, 0].set_xlabel("Lag")
+    axes[1, 0].set_ylabel("ACF")
+
+    # 4) Q-Q plot
+    axes[1, 1].scatter(qq[0][0], qq[0][1], alpha=0.6, s=30)
+    axes[1, 1].plot(qq[0][0], qq[1][0] * qq[0][0] + qq[1][1], "r--", lw=2)
+    axes[1, 1].set_title("Q–Q plot")
+    axes[1, 1].set_xlabel("Theoretical quantiles")
+    axes[1, 1].set_ylabel("Sample quantiles")
+
+    plt.tight_layout()
+    plt.show()
+```
+
+```{python}
+target = "% Silica Concentrate"
+y_train = df_train[target].dropna()
+y_train_gamma = prepare_gamma_target(y_train)
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore")
+
+    glarma_like_model = SARIMAX(
+        endog=np.log(y_train_gamma),
+        order=(2, 1, 1),
+        trend="c",
+        enforce_stationarity=False,
+        enforce_invertibility=False,
+    )
+
+    glarma_like_result = glarma_like_model.fit(disp=False)
+
+print(glarma_like_result.summary())
+```
+
+```{python}
+y_pred_train_glarma = rolling_prediction_glarma_like_train(
+    result=glarma_like_result,
+    y_train=y_train,
+)
+```
+
+```{python}
+y_test = df_test[target].dropna()
+y_test_gamma = prepare_gamma_target(y_test)
+
+# Get GLARMA predictions and confidence intervals
+y_pred_test_glarma, y_pred_test_glarma_lower, y_pred_test_glarma_upper = rolling_forecast_glarma_like(
+    result=glarma_like_result,
+    y_train=y_train,
+    y_test=y_test,
+)
+```
+
+## Métricas de desempenho
+
+```{python}
+# Calculate metrics for training set
+metrics_train = calculate_metrics(
+    y_true=y_train,
+    y_pred=y_pred_train_glarma,
+)
+print("Training Set Metrics:")
+print(metrics_train.to_string(index=False))
+
+# Calculate metrics for test set
+metrics_test = calculate_metrics(
+    y_true=y_test,
+    y_pred=y_pred_test_glarma,
+)
+print("\nTest Set Metrics:")
+print(metrics_test.to_string(index=False))
+```
+
+## Gráfico de previsões
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_glarma,
+    y_pred_test=y_pred_test_glarma,
+    y_pred_test_lower=y_pred_test_glarma_lower,
+    y_pred_test_upper=y_pred_test_glarma_upper,
+    model_name="GLARMA Gamma (log)",
+)
+```
+
+## Análise de resíduos
+
+```{python}
+residuals_glarma = compute_glarma_residuals(
+    result=glarma_like_result,
+    y=y_train_gamma,
+)
+
+plot_glarma_diagnostics(
+    residuals=residuals_glarma,
+    model_name="GLARMA Gamma (log)",
+)
+
+residuals_diagnostics(residuals_glarma)
+```
+
+# Comparação com modelo ARIMA(2,1,1)
+
+```{python}
+def rolling_forecast_arima(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    order: Tuple[int, int, int],
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """Rolling 1-step-ahead forecast for ARIMA model using append method.
+    
+    Uses append() for efficient state updates instead of refitting at each step.
+    Returns: (predictions, lower_conf, upper_conf)
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore")
+        
+        # Fit once on training data
+        model = ARIMA(
+            y_train,
+            order=order,
+            enforce_stationarity=False,
+            enforce_invertibility=False,
+        )
+        result = model.fit()
+    
+    predictions = []
+    lower_bounds = []
+    upper_bounds = []
+    
+    for t in range(len(y_test)):
+        # Forecast 1-step ahead with confidence interval
+        forecast = result.get_forecast(steps=1)
+        pred = float(forecast.predicted_mean.iloc[0])
+        predictions.append(pred)
+        
+        # Get confidence interval (default 95%)
+        conf_int = forecast.conf_int().iloc[0]
+        lower_bounds.append(float(conf_int[0]))
+        upper_bounds.append(float(conf_int[1]))
+        
+        # Update model state with actual value using append with refit
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore")
+            result = result.append([y_test.iloc[t]], refit=True)
+
+    return (
+        pd.Series(predictions, index=y_test.index, name="arima_pred"),
+        pd.Series(lower_bounds, index=y_test.index, name="arima_lower"),
+        pd.Series(upper_bounds, index=y_test.index, name="arima_upper"),
+    )
+```
+
+```{python}
+# Fit ARIMA(2,1,1) on training data
+order_arima = (2, 1, 1)
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore")
+    
+    arima_model = ARIMA(y_train, order=order_arima)
+    arima_result = arima_model.fit()
+
+# Get training predictions (fitted values)
+y_pred_train_arima = pd.Series(
+    arima_result.fittedvalues.values,
+    index=y_train.index,
+    name="arima_train_pred",
+)
+
+# Get test predictions with confidence intervals (rolling forecast)
+y_pred_test_arima, y_pred_test_arima_lower, y_pred_test_arima_upper = rolling_forecast_arima(
+    y_train=y_train,
+    y_test=y_test,
+    order=order_arima,
+)
+```
+
+```{python}
+# Calculate comparison metrics for test set
+metrics_glarma_test = calculate_metrics(y_true=y_test, y_pred=y_pred_test_glarma)
+metrics_arima_test = calculate_metrics(y_true=y_test, y_pred=y_pred_test_arima)
+
+# Create comparison table
+comparison_df = pd.DataFrame({
+    "Model": ["GLARMA", "ARIMA(2,1,1)"],
+    "AIC": [glarma_like_result.aic, arima_result.aic],
+    "BIC": [glarma_like_result.bic, arima_result.bic],
+    "MAE (test)": [metrics_glarma_test["Value"].iloc[0], metrics_arima_test["Value"].iloc[0]],
+    "RMSE (test)": [metrics_glarma_test["Value"].iloc[1], metrics_arima_test["Value"].iloc[1]],
+    "MAPE (%) (test)": [metrics_glarma_test["Value"].iloc[2], metrics_arima_test["Value"].iloc[2]],
+})
+
+print("Comparação entre modelos:")
+print(comparison_df.to_string(index=False))
+```
+
+```{python}
+# Plot comparison of both models
+def plot_model_comparison(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    y_pred_train_model1: pd.Series,
+    y_pred_test_model1: pd.Series,
+    y_pred_test_model1_lower: pd.Series,
+    y_pred_test_model1_upper: pd.Series,
+    y_pred_train_model2: pd.Series,
+    y_pred_test_model2: pd.Series,
+    y_pred_test_model2_lower: pd.Series,
+    y_pred_test_model2_upper: pd.Series,
+    model1_name: str = "Model 1",
+    model2_name: str = "Model 2",
+    figsize: Tuple[int, int] = (14, 8)
+) -> None:
+    """Plot comparison of two models' predictions with confidence intervals.
+    
+    Color scheme:
+    - Actual values: black solid lines
+    - Model 1 (GLARMA): blue dashed lines with light blue CI band
+    - Model 2 (ARIMA): orange dashed lines with light orange CI band
+    """
+    width_px = int(figsize[0] * 80)
+    height_px = int(figsize[1] * 80)
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        subplot_titles=(
+            "Training Set: Actual vs. Predictions",
+            "Test Set: Actual vs. Predictions"
+        ),
+        shared_xaxes=False,
+        vertical_spacing=0.12,
+    )
+
+    # Training set - Actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_train.index,
+            y=y_train.values,
+            mode="lines",
+            name="Actual",
+            line=dict(color="black", width=2),
+        ),
+        row=1, col=1,
+    )
+
+    # Training set - Model 1 (blue dashed)
+    fig.add_trace(
+        go.Scatter(
+            x=y_pred_train_model1.index,
+            y=y_pred_train_model1.values,
+            mode="lines",
+            name=model1_name,
+            line=dict(color="royalblue", dash="dash"),
+        ),
+        row=1, col=1,
+    )
+
+    # Training set - Model 2 (orange dashed)
+    fig.add_trace(
+        go.Scatter(
+            x=y_pred_train_model2.index,
+            y=y_pred_train_model2.values,
+            mode="lines",
+            name=model2_name,
+            line=dict(color="orange", dash="dash"),
+        ),
+        row=1, col=1,
+    )
+
+    # Test set - Actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_test.index,
+            y=y_test.values,
+            mode="lines",
+            name="Actual (test)",
+            line=dict(color="black", width=2),
+        ),
+        row=2, col=1,
+    )
+
+    # Test set - Model 1 Confidence Interval (light blue band)
+    fig.add_trace(
+        go.Scatter(
+            x=y_pred_test_model1_upper.index.tolist() + y_pred_test_model1_lower.index.tolist()[::-1],
+            y=y_pred_test_model1_upper.values.tolist() + y_pred_test_model1_lower.values.tolist()[::-1],
+            fill="toself",
+            fillcolor="rgba(65, 105, 225, 0.2)",  # Light royalblue with transparency
+            line=dict(color="rgba(255,255,255,0)"),
+            name=f"{model1_name} CI (test)",
+        ),
+        row=2, col=1,
+    )
+
+    # Test set - Model 1 (blue dashed)
+    fig.add_trace(
+        go.Scatter(
+            x=y_pred_test_model1.index,
+            y=y_pred_test_model1.values,
+            mode="lines",
+            name=f"{model1_name} (test)",
+            line=dict(color="royalblue", dash="dash"),
+        ),
+        row=2, col=1,
+    )
+
+    # Test set - Model 2 Confidence Interval (light orange band)
+    fig.add_trace(
+        go.Scatter(
+            x=y_pred_test_model2_upper.index.tolist() + y_pred_test_model2_lower.index.tolist()[::-1],
+            y=y_pred_test_model2_upper.values.tolist() + y_pred_test_model2_lower.values.tolist()[::-1],
+            fill="toself",
+            fillcolor="rgba(255, 165, 0, 0.2)",  # Light orange with transparency
+            line=dict(color="rgba(255,255,255,0)"),
+            name=f"{model2_name} CI (test)",
+        ),
+        row=2, col=1,
+    )
+
+    # Test set - Model 2 (orange dashed)
+    fig.add_trace(
+        go.Scatter(
+            x=y_pred_test_model2.index,
+            y=y_pred_test_model2.values,
+            mode="lines",
+            name=f"{model2_name} (test)",
+            line=dict(color="orange", dash="dash"),
+        ),
+        row=2, col=1,
+    )
+
+    fig.update_layout(
+        height=height_px,
+        width=width_px,
+        template="plotly_white",
+        hovermode="x unified",
+    )
+
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text=target, row=1, col=1)
+    fig.update_yaxes(title_text=target, row=2, col=1)
+
+    # Adicionar destaque cinza para o período de testes (segunda linha)
+    fig.add_vrect(
+        x0=y_test.index[0],
+        x1=y_test.index[-1],
+        fillcolor="lightgray",
+        opacity=0.2,
+        layer="below",
+        line_width=0,
+        row=2,
+        col=1,
+    )
+
+    fig.show()
+
+
+plot_model_comparison(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train_model1=y_pred_train_glarma,
+    y_pred_test_model1=y_pred_test_glarma,
+    y_pred_test_model1_lower=y_pred_test_glarma_lower,
+    y_pred_test_model1_upper=y_pred_test_glarma_upper,
+    y_pred_train_model2=y_pred_train_arima,
+    y_pred_test_model2=y_pred_test_arima,
+    y_pred_test_model2_lower=y_pred_test_arima_lower,
+    y_pred_test_model2_upper=y_pred_test_arima_upper,
+    model1_name="GLARMA",
+    model2_name="ARIMA(2,1,1)",
+)
+```
