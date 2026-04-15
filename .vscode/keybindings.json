@@ -1,0 +1,8 @@
+[
+  {
+    "key": "shift+cmd+k",
+    "command": "workbench.action.tasks.runTask",
+    "args": "Quarto: Render and Preview",
+    "when": "resourceExtname == .qmd"
+  }
+]
