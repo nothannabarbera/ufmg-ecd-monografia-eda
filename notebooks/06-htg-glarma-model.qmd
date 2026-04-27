@@ -518,7 +518,7 @@ with warnings.catch_warnings():
 
     glarma_like_model = SARIMAX(
         endog=np.log(y_train_gamma),
-        order=(2, 1, 1),
+        order=(3, 0, 0),
         trend="c",
         enforce_stationarity=False,
         enforce_invertibility=False,
@@ -598,7 +598,7 @@ plot_glarma_diagnostics(
 residuals_diagnostics(residuals_glarma)
 ```
 
-# Comparação com modelo ARIMA(2,1,1)
+# Comparação com modelo ARIMA(3,0,0)
 
 ```{python}
 def rolling_forecast_arima(
@@ -652,7 +652,7 @@ def rolling_forecast_arima(
 
 ```{python}
 # Fit ARIMA(2,1,1) on training data
-order_arima = (2, 1, 1)
+order_arima = (3, 0, 0)
 
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore")
@@ -682,7 +682,7 @@ metrics_arima_test = calculate_metrics(y_true=y_test, y_pred=y_pred_test_arima)
 
 # Create comparison table
 comparison_df = pd.DataFrame({
-    "Model": ["GLARMA", "ARIMA(2,1,1)"],
+    "Model": ["GLARMA", "ARIMA(3,0,0)"],
     "AIC": [glarma_like_result.aic, arima_result.aic],
     "BIC": [glarma_like_result.bic, arima_result.bic],
     "MAE (test)": [metrics_glarma_test["Value"].iloc[0], metrics_arima_test["Value"].iloc[0]],
@@ -867,6 +867,6 @@ plot_model_comparison(
     y_pred_test_model2_lower=y_pred_test_arima_lower,
     y_pred_test_model2_upper=y_pred_test_arima_upper,
     model1_name="GLARMA",
-    model2_name="ARIMA(2,1,1)",
+    model2_name="ARIMA(3,0,0)",
 )
 ```

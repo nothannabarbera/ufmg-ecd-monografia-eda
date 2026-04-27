@@ -1,7 +1,7 @@
 ---
-title: "ARIMA: Análise comparativa dos modelos candidatos"
+title: "ARIMA: Análise aplicando transformação log na série"
 author: "Hanna Tatsuta Galassi"
-date: "2026-03-21"
+date: "2026-04-16"
 format: html
 toc: true
 echo: false
@@ -24,11 +24,16 @@ from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 ```
 
-```{python}
-path_1h = "../data/interim/resampled_1h.csv"
 
-df_1h_resampled = pd.read_csv(
-    path_1h, index_col="date_fixed", parse_dates=["date_fixed"]
+```{python}
+path_train = "../data/processed/train.csv"
+path_test = "../data/processed/test.csv"
+
+df_train = pd.read_csv(
+    path_train, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+df_test = pd.read_csv(
+    path_test, index_col="date_fixed", parse_dates=["date_fixed"]
 )
 ```
 
@@ -37,13 +42,11 @@ target = "% Silica Concentrate"
 ```
 
 ```{python}
-test_proportion = 0.2
-n_samples = len(df_1h_resampled)
-split_pos = int(n_samples * (1 - test_proportion))
-split_timestamp = df_1h_resampled.index[split_pos]
+df_train_log = df_train.apply(lambda x: np.log(x) if x.name == target else x)
+df_test_log = df_test.apply(lambda x: np.log(x) if x.name == target else x)
 
-df_train = df_1h_resampled[df_1h_resampled.index < split_timestamp]
-df_test = df_1h_resampled[df_1h_resampled.index >= split_timestamp]
+y_train = df_train_log[target]
+y_test = df_test_log[target]
 ```
 
 ```{python}
@@ -254,8 +257,8 @@ def compute_regression_metrics(
             "y_true and y_pred must have the same length."
         )
 
-    # Align indices just in case
-    y_true, y_pred = y_true.align(y_pred, join="inner")
+    # Predictions from statsmodels.predict may use integer index; reset to match y_true
+    y_pred = pd.Series(y_pred.values, index=y_true.index)
 
     mae = mean_absolute_error(y_true, y_pred)
 
@@ -265,13 +268,25 @@ def compute_regression_metrics(
     rmse = float(np.sqrt(mse))
 
     if np.any(y_true == 0):
-        raise ValueError(
-            "MAPE is undefined when y_true contains zeros."
+        warnings.warn(
+            "y_true contains zero values; MAPE will be computed only on nonzero targets.",
+            UserWarning,
         )
-
-    mape = float(
-        np.mean(np.abs((y_true - y_pred) / y_true)) * 100.0
-    )
+        nonzero_mask = y_true != 0
+        if not np.any(nonzero_mask):
+            mape = float("nan")
+        else:
+            y_true_nonzero = y_true[nonzero_mask]
+            y_pred_nonzero = y_pred[nonzero_mask]
+            mape = float(
+                np.mean(
+                    np.abs((y_true_nonzero - y_pred_nonzero) / y_true_nonzero)
+                ) * 100.0
+            )
+    else:
+        mape = float(
+            np.mean(np.abs((y_true - y_pred) / y_true)) * 100.0
+        )
 
     metrics: Dict[str, float] = {
         f"{prefix}mae": float(mae),
@@ -627,13 +642,7 @@ def rolling_forecast_arima(
 ```
 
 ```{python}
-series = df_train[target].dropna()
-y_train = df_train[target].dropna()
-y_test = df_test[target].dropna()
 
-series.to_csv("../data/processed/full_data.csv")
-y_train.to_csv("../data/processed/train.csv")
-y_test.to_csv("../data/processed/test.csv")
 ```
 
 # ARIMA (1,0,1)
@@ -658,7 +667,7 @@ y_pred_test_1 = model1.predict(
 
 summary1 = summarize_arima_model(
     model_result=model1,
-    model_name="ARIMA(1,1,1)",
+    model_name="ARIMA(1,0,1)",
     y_train=y_train,
     y_test=y_test,
     y_pred_train=y_pred_train_1,
@@ -673,6 +682,47 @@ plot_arima_diagnostics(
     model_name="ARIMA(1,0,1)",
     figsize=(10, 8),
 )
+```
+
+```{python}
+order_best = (1, 0, 1)
+
+# (Opcional) Rolling recursivo: atualiza com a própria previsão (simula produção)
+y_pred_test_recursive = rolling_forecast_arima(
+    y_train=y_train,
+    y_test=y_test,
+    order=order_best,
+    use_actual=True,
+    refit=False,
+)
+
+# Se quiser manter também previsão "normal" para comparar:
+model_best = ARIMA(y_train, order=order_best).fit()
+y_pred_train_best = model_best.predict(
+    start=y_train.index[0],
+    end=y_train.index[-1],
+)
+
+# Plote usando seu helper atual:
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_best,
+    y_pred_test=y_pred_test_recursive,
+    model_name="ARIMA(1,0,1)",
+    figsize=(12, 6),
+)
+
+# Métricas no teste para o rolling:
+summary_roll = summarize_arima_model(
+    model_result=model_best,
+    model_name="ARIMA(1,0,1)",
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_best,
+    y_pred_test=y_pred_test_recursive,
+)
+print(summary_roll)
 ```
 
 # ARIMA(2,0,0)
@@ -715,6 +765,47 @@ plot_arima_diagnostics(
 )
 ```
 
+```{python}
+order_best = (2, 0, 0)
+
+# (Opcional) Rolling recursivo: atualiza com a própria previsão (simula produção)
+y_pred_test_recursive = rolling_forecast_arima(
+    y_train=y_train,
+    y_test=y_test,
+    order=order_best,
+    use_actual=True,
+    refit=False,
+)
+
+# Se quiser manter também previsão "normal" para comparar:
+model_best = ARIMA(y_train, order=order_best).fit()
+y_pred_train_best = model_best.predict(
+    start=y_train.index[0],
+    end=y_train.index[-1],
+)
+
+# Plote usando seu helper atual:
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_best,
+    y_pred_test=y_pred_test_recursive,
+    model_name="ARIMA(2,0,0)",
+    figsize=(12, 6),
+)
+
+# Métricas no teste para o rolling:
+summary_roll = summarize_arima_model(
+    model_result=model_best,
+    model_name="ARIMA(2,0,0)",
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_best,
+    y_pred_test=y_pred_test_recursive,
+)
+print(summary_roll)
+```
+
 # ARIMA(3,0,0)
 
 ```{python}
@@ -755,10 +846,8 @@ plot_arima_diagnostics(
 )
 ```
 
-# Visualização temporal
-
 ```{python}
-order_best = (2, 1, 1)
+order_best = (3, 0, 0)
 
 # (Opcional) Rolling recursivo: atualiza com a própria previsão (simula produção)
 y_pred_test_recursive = rolling_forecast_arima(
@@ -782,14 +871,14 @@ plot_forecast_vs_actual(
     y_test=y_test,
     y_pred_train=y_pred_train_best,
     y_pred_test=y_pred_test_recursive,
-    model_name="ARIMA(2,1,1)",
+    model_name="ARIMA(3,0,0)",
     figsize=(12, 6),
 )
 
 # Métricas no teste para o rolling:
 summary_roll = summarize_arima_model(
     model_result=model_best,
-    model_name="ARIMA(2,1,1)",
+    model_name="ARIMA(3,0,0)",
     y_train=y_train,
     y_test=y_test,
     y_pred_train=y_pred_train_best,
@@ -798,21 +887,3 @@ summary_roll = summarize_arima_model(
 print(summary_roll)
 ```
 
-
-# Análise
-
-A comparação entre os modelos ARIMA aplicados à séries % Silica Concentrate indica que o modelo ARIMA(2,1,1) apresenta um ajuste melhor que o ARIMA(1,1,1)  pelos critérios de informação (AIC e BIC).
-
-## Análise dos resíduos - ARIMA(2,1,1)
-
-A análise dos resíduos do modelo ARIMA(2,1,1) indica que, embora parte das hipóteses clássicas do modelo seja parcialmente atendida, o ajuste não é suficiente para representar de maneira adequada a dinâmica da série temporal analisada. O exame do gráfico dos resíduos ao longo do tempo mostra ausência de tendência evidente e média aproximadamente nula; entretanto, observa-se a presença de flutuações de magnitude variável e episódios de maior dispersão, sugerindo que o modelo não captura integralmente a complexidade do processo gerador dos dados.
-
-A avaliação da autocorrelação dos resíduos, por meio da função de autocorrelação (ACF), indica que a maior parte dos coeficientes permanece dentro dos limites de confiança estatística. O teste de Ljung-Box aplicado à primeira defasagem apresenta valor-p de 0,58, não permitindo rejeitar a hipótese nula de ausência de autocorrelação serial. Apesar desse resultado, a inexistência de autocorrelação estatisticamente significativa não é suficiente, por si só, para garantir que a estrutura dinâmica da série tenha sido devidamente modelada, especialmente em contextos industriais ou operacionais caracterizados por comportamentos não lineares e mudanças abruptas.
-
-No que se refere à variância dos resíduos, o teste de heterocedasticidade não aponta evidência estatística de variância não constante (p = 0,17). Ainda assim, a inspeção visual dos resíduos ao longo do tempo sugere períodos com maior concentração de desvios, o que indica possíveis mudanças locais de variabilidade que não são explicitamente modeladas pelo ARIMA(2,1,1). Esse comportamento reforça a interpretação de que o modelo fornece apenas uma aproximação média da série, sem conseguir representar adequadamente seus regimes dinâmicos.
-
-A análise da distribuição dos resíduos evidencia limitações mais marcantes do modelo. O teste de Jarque-Bera rejeita fortemente a hipótese de normalidade (JB = 1828,81; p < 0,001), indicando resíduos assimétricos e com curtose elevada. Esses resultados são consistentes com os valores observados de assimetria (skewness = 0,74) e curtose (6,42), caracterizando uma distribuição leptocúrtica, com caudas mais pesadas do que as esperadas sob a suposição normal. O gráfico Q–Q confirma essa inadequação, exibindo desvios sistemáticos da linha de referência, principalmente nas regiões extremas.
-
-A não normalidade dos resíduos, associada à presença de episódios de maior variabilidade e à elevada curtose, sugere que o ARIMA(2,1,1) não consegue capturar plenamente a dinâmica estocástica da série, possivelmente influenciada por fatores exógenos, variações operacionais ou comportamentos não lineares. Dessa forma, embora o modelo apresente resíduos aproximadamente não autocorrelacionados, o conjunto dos diagnósticos indica que ele não descreve de maneira satisfatória a estrutura real do processo temporal.
-
-Em síntese, o ARIMA(2,1,1) mostra-se limitado para representar a complexidade da série analisada. A evidência de resíduos não gaussianos, com caudas pesadas e possíveis variações locais de dispersão, indica que abordagens mais flexíveis, capazes de modelar não normalidade, heterogeneidade e dinâmica residual, tendem a ser mais adequadas para capturar o comportamento observado nos dados.
