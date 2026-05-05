@@ -1,0 +1,327 @@
+---
+title: "GLARMA: Desenvolvimento de modelo com tempo como Covariável e resíduos como série temporal"
+author: "Hanna Tatsuta Galassi"
+date: "2026-05-03"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+# Modelo GLARMA Lognormal em R
+
+```{r}
+# install.packages(c("knitr", "rmarkdown", "readr", "dplyr", "ggplot2", "scales", "plotly", "forecast"))
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(plotly)
+library(forecast)
+```
+
+## Carregar os dados
+
+```{r}
+path_train <- "../data/processed/train.csv"
+path_test  <- "../data/processed/test.csv"
+
+df_train <- read_csv(path_train, col_types = cols(
+  date_fixed = col_datetime(format = "%Y-%m-%d %H:%M:%S"),
+  .default = col_double()
+))
+
+df_test <- read_csv(path_test, col_types = cols(
+  date_fixed = col_datetime(format = "%Y-%m-%d %H:%M:%S"),
+  .default = col_double()
+))
+
+df_train <- df_train %>% arrange(date_fixed)
+df_test  <- df_test  %>% arrange(date_fixed)
+
+target <- "% Silica Concentrate"
+
+df_train <- df_train %>% mutate(target = .data[[target]])
+df_test  <- df_test  %>% mutate(target = .data[[target]])
+
+x_train <- seq_len(nrow(df_train))
+x_test  <- seq_len(nrow(df_test)) + max(x_train)
+
+y_train <- df_train$target
+y_test  <- df_test$target
+```
+
+## Implementação do GLARMA Lognormal
+
+O modelo GLARMA lognormal assume:
+
+$$Y_t \mid \mathcal{F}_{t-1} \sim \text{LogNormal}(\mu_t,\, \sigma^2)$$
+
+onde a variável de estado $W_t$ evolui como:
+
+$$W_t = \mathbf{x}_t^\top \boldsymbol{\beta} + \sum_{j=1}^{p} \phi_j\, e_{t-j} + \sum_{k=1}^{q} \theta_k\, e_{t-k}$$
+
+com resíduos $e_t = \log(Y_t) - W_t$ e link $\mu_t = W_t$ (identidade em log-escala).
+
+A estimação é feita por Fisher Scoring iterativo sobre os parâmetros
+$\boldsymbol{\psi} = (\boldsymbol{\beta}, \phi_1, \ldots, \phi_p, \theta_1, \ldots, \theta_q, \sigma^2)$.
+
+```{r}
+glarma_lognormal_fit <- function(y, X, phi_lags = c(1, 2, 3), theta_lags = integer(0),
+                                  maxit = 200, tol = 1e-8) {
+  n      <- length(y)
+  p      <- length(phi_lags)
+  q      <- length(theta_lags)
+  y_log  <- log(y)
+
+  beta   <- as.vector(solve(t(X) %*% X) %*% t(X) %*% y_log)
+  phi    <- rep(0, p)
+  theta  <- rep(0, q)
+  sigma2 <- as.numeric(var(y_log - X %*% beta))
+
+  compute_We <- function(beta, phi, theta) {
+    W <- numeric(n); e <- numeric(n)
+    for (t in seq_len(n)) {
+      ar_term <- 0
+      for (k in seq_along(phi_lags))   { lag_k <- phi_lags[k];   if (t > lag_k) ar_term <- ar_term + phi[k]   * e[t - lag_k] }
+      for (k in seq_along(theta_lags)) { lag_k <- theta_lags[k]; if (t > lag_k) ar_term <- ar_term + theta[k] * e[t - lag_k] }
+      W[t] <- sum(X[t, ] * beta) + ar_term
+      e[t] <- y_log[t] - W[t]
+    }
+    list(W = W, e = e)
+  }
+
+  for (iter in seq_len(maxit)) {
+    beta_old <- beta; phi_old <- phi; theta_old <- theta
+
+    we <- compute_We(beta, phi, theta)
+    W  <- we$W; e <- we$e
+
+    nb   <- ncol(X)
+    npar <- nb + p + q
+    grad <- numeric(npar)
+    H    <- matrix(0, npar, npar)
+    dW   <- matrix(0, n, npar)
+
+    for (t in seq_len(n)) {
+      for (k in seq_len(nb)) {
+        dW[t, k] <- X[t, k]
+        for (j in seq_along(phi_lags))   { lag_j <- phi_lags[j];   if (t > lag_j) dW[t, k] <- dW[t, k] - phi[j]   * dW[t - lag_j, k] }
+        for (j in seq_along(theta_lags)) { lag_j <- theta_lags[j]; if (t > lag_j) dW[t, k] <- dW[t, k] - theta[j] * dW[t - lag_j, k] }
+      }
+      for (k in seq_along(phi_lags)) {
+        lag_k <- phi_lags[k]
+        dW[t, nb + k] <- if (t > lag_k) e[t - lag_k] else 0
+        for (j in seq_along(phi_lags))   { lag_j <- phi_lags[j];   if (t > lag_j) dW[t, nb + k] <- dW[t, nb + k] - phi[j]   * dW[t - lag_j, nb + k] }
+        for (j in seq_along(theta_lags)) { lag_j <- theta_lags[j]; if (t > lag_j) dW[t, nb + k] <- dW[t, nb + k] - theta[j] * dW[t - lag_j, nb + k] }
+      }
+      for (k in seq_along(theta_lags)) {
+        lag_k <- theta_lags[k]
+        dW[t, nb + p + k] <- if (t > lag_k) e[t - lag_k] else 0
+        for (j in seq_along(phi_lags))   { lag_j <- phi_lags[j];   if (t > lag_j) dW[t, nb + p + k] <- dW[t, nb + p + k] - phi[j]   * dW[t - lag_j, nb + p + k] }
+        for (j in seq_along(theta_lags)) { lag_j <- theta_lags[j]; if (t > lag_j) dW[t, nb + p + k] <- dW[t, nb + p + k] - theta[j] * dW[t - lag_j, nb + p + k] }
+      }
+
+      grad <- grad + (e[t] / sigma2) * dW[t, ]
+      dw_t <- dW[t, ]
+      H    <- H + crossprod(t(dw_t)) / sigma2
+    }
+
+    grad_s2 <- -n / (2 * sigma2) + sum(e^2) / (2 * sigma2^2)
+    H_reg   <- H + diag(1e-8, npar)
+    delta   <- tryCatch(solve(H_reg, grad), error = function(e) rep(0, npar))
+
+    beta   <- beta  + delta[seq_len(nb)]
+    phi    <- phi   + delta[nb + seq_len(p)]
+    if (q > 0) theta <- theta + delta[nb + p + seq_len(q)]
+    sigma2 <- max(sigma2 - grad_s2 / (n / (2 * sigma2^2)), 1e-6)
+
+    if (max(abs(c(beta - beta_old, phi - phi_old, theta - theta_old))) < tol) break
+  }
+
+  we <- compute_We(beta, phi, theta)
+
+  list(
+    beta       = beta,
+    phi        = phi,
+    theta      = theta,
+    sigma2     = sigma2,
+    W          = we$W,
+    e          = we$e,
+    fitted     = exp(we$W),
+    y_log      = y_log,
+    X          = X,
+    phi_lags   = phi_lags,
+    theta_lags = theta_lags,
+    iter       = iter,
+    loglik     = sum(dnorm(y_log, mean = we$W, sd = sqrt(sigma2), log = TRUE) - y_log)
+  )
+}
+
+glarma_lognormal_forecast <- function(model, X_new) {
+  beta       <- model$beta
+  phi        <- model$phi
+  theta      <- model$theta
+  phi_lags   <- model$phi_lags
+  theta_lags <- model$theta_lags
+  sigma2     <- model$sigma2
+  e_hist     <- model$e
+  W_hist     <- model$W
+  n_hist     <- length(e_hist)
+  n_ahead    <- nrow(X_new)
+
+  e_ext <- c(e_hist, numeric(n_ahead))
+  W_ext <- c(W_hist, numeric(n_ahead))
+
+  for (t in seq_len(n_ahead)) {
+    ar_term <- 0
+    for (k in seq_along(phi_lags))   { lag_k <- phi_lags[k];   idx <- n_hist + t - lag_k; if (idx >= 1) ar_term <- ar_term + phi[k]   * e_ext[idx] }
+    for (k in seq_along(theta_lags)) { lag_k <- theta_lags[k]; idx <- n_hist + t - lag_k; if (idx >= 1) ar_term <- ar_term + theta[k] * e_ext[idx] }
+    W_ext[n_hist + t] <- sum(X_new[t, ] * beta) + ar_term
+    # residuo bootstrap: log(E[Y_t]) - W_t = sigma2/2 (correcao lognormal)
+    e_ext[n_hist + t] <- sigma2 / 2
+  }
+
+  exp(W_ext[(n_hist + 1):(n_hist + n_ahead)])
+}
+
+glarma_aic <- function(model) {
+  k <- length(model$beta) + length(model$phi) + length(model$theta) + 1
+  -2 * model$loglik + 2 * k
+}
+
+glarma_bic <- function(model) {
+  k <- length(model$beta) + length(model$phi) + length(model$theta) + 1
+  -2 * model$loglik + log(length(model$y_log)) * k
+}
+```
+
+## Ajustar modelos
+
+```{r}
+X_train <- cbind(intercept = 1, time = x_train)
+X_test  <- cbind(intercept = 1, time = x_test)
+
+model_glarma_arma <- glarma_lognormal_fit(y_train, X_train, phi_lags = c(1), theta_lags = c(1))
+arima_arma        <- Arima(y_train, order = c(1, 0, 1))
+
+cat("GLARMA ARMA(1,1) — iter:", model_glarma_arma$iter, " loglik:", round(model_glarma_arma$loglik, 2), "\n")
+```
+
+### Coeficientes GLARMA ARMA(1,1)
+
+```{r}
+coef_names_arma <- c(colnames(X_train),
+                     paste0("phi[", model_glarma_arma$phi_lags, "]"),
+                     paste0("theta[", model_glarma_arma$theta_lags, "]"))
+tibble(parametro = coef_names_arma,
+       estimativa = round(c(model_glarma_arma$beta, model_glarma_arma$phi, model_glarma_arma$theta), 6))
+```
+
+## Diagnóstico do modelo
+
+```{r}
+resid_df <- tibble(
+  date     = df_train$date_fixed,
+  residual = model_glarma_arma$e
+)
+
+p1 <- ggplot(resid_df, aes(x = date, y = residual)) +
+  geom_line(alpha = 0.6) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Resíduos ao longo do tempo", x = "Data", y = "Resíduo") +
+  theme_minimal()
+
+acf_vals  <- acf(model_glarma_arma$e,  lag.max = 30, plot = FALSE)
+pacf_vals <- pacf(model_glarma_arma$e, lag.max = 30, plot = FALSE)
+
+p2 <- ggplot(
+  tibble(lag = acf_vals$lag[-1], acf = acf_vals$acf[-1]),
+  aes(x = lag, y = acf)
+) +
+  geom_hline(yintercept = 0) +
+  geom_segment(aes(xend = lag, yend = 0)) +
+  geom_hline(yintercept = c(-1, 1) * 1.96 / sqrt(length(model_glarma_arma$e)),
+             linetype = "dashed", color = "blue") +
+  labs(title = "ACF dos resíduos", x = "Lag", y = "ACF") +
+  theme_minimal()
+
+p3 <- ggplot(
+  tibble(lag = pacf_vals$lag, pacf = pacf_vals$acf),
+  aes(x = lag, y = pacf)
+) +
+  geom_hline(yintercept = 0) +
+  geom_segment(aes(xend = lag, yend = 0)) +
+  geom_hline(yintercept = c(-1, 1) * 1.96 / sqrt(length(model_glarma_arma$e)),
+             linetype = "dashed", color = "blue") +
+  labs(title = "PACF dos resíduos", x = "Lag", y = "PACF") +
+  theme_minimal()
+
+p4 <- ggplot(tibble(e = model_glarma_arma$e), aes(sample = e)) +
+  stat_qq() + stat_qq_line(color = "red") +
+  labs(title = "QQ-plot dos resíduos") +
+  theme_minimal()
+
+gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Previsões e métricas
+
+```{r}
+pred_test_glarma_arma <- glarma_lognormal_forecast(model_glarma_arma, X_test)
+pred_test_arima_arma  <- as.numeric(forecast(arima_arma, h = nrow(X_test))$mean)
+actual_test           <- df_test$target
+
+calc_metrics <- function(actual, predicted, prefix) {
+  tibble(
+    !!paste0(prefix, "_mae")  := round(mean(abs(actual - predicted)), 4),
+    !!paste0(prefix, "_rmse") := round(sqrt(mean((actual - predicted)^2)), 4),
+    !!paste0(prefix, "_mape") := round(mean(abs((actual - predicted) / actual)) * 100, 2)
+  )
+}
+
+summary_df <- tibble(model = c("GLARMA ARMA(1,1)", "ARIMA(1,0,1)")) %>%
+  bind_cols(tibble(
+    aic = c(round(glarma_aic(model_glarma_arma), 2), round(arima_arma$aic, 2)),
+    bic = c(round(glarma_bic(model_glarma_arma), 2), round(arima_arma$bic, 2))
+  )) %>%
+  bind_cols(bind_rows(
+    calc_metrics(y_train, model_glarma_arma$fitted,       "train"),
+    calc_metrics(y_train, as.numeric(fitted(arima_arma)), "train")
+  )) %>%
+  bind_cols(bind_rows(
+    calc_metrics(actual_test, pred_test_glarma_arma, "test"),
+    calc_metrics(actual_test, pred_test_arima_arma,  "test")
+  ))
+
+knitr::kable(summary_df, digits = 4)
+```
+
+```{r}
+plot_train <- tibble(
+  date               = df_train$date_fixed,
+  actual             = y_train,
+  `GLARMA ARMA(1,1)` = model_glarma_arma$fitted,
+  `ARIMA(1,0,1)`     = as.numeric(fitted(arima_arma))
+)
+
+p <- ggplot(plot_train, aes(x = date)) +
+  geom_line(aes(y = actual,             color = "Observado"),        linewidth = 0.6) +
+  geom_line(aes(y = `GLARMA ARMA(1,1)`, color = "GLARMA ARMA(1,1)"), linetype = "dashed", linewidth = 0.8) +
+  geom_line(aes(y = `ARIMA(1,0,1)`,     color = "ARIMA(1,0,1)"),     linetype = "dashed", linewidth = 0.8) +
+  scale_color_manual(values = c(
+    "Observado"        = "black",
+    "GLARMA ARMA(1,1)" = "royalblue",
+    "ARIMA(1,0,1)"     = "orange"
+  )) +
+  labs(
+    title = "Treino — Observado vs Modelos",
+    x     = "Data",
+    y     = "% Silica Concentrate",
+    color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+ggplotly(p)
+```

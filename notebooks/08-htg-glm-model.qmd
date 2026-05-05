@@ -1,0 +1,995 @@
+---
+title: "GLM: Desenvolvimento de modelo com tempo como Covariável"
+author: "Hanna Tatsuta Galassi"
+date: "2026-04-27"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+# Modelo ajustado
+
+```{python}
+import warnings
+from typing import Optional, Tuple, Dict
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import statsmodels.api as sm
+from statsmodels.tsa.stattools import acf, pacf
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from scipy.stats import jarque_bera
+from scipy import stats
+```
+
+```{python}
+warnings.filterwarnings("ignore")
+```
+
+```{python}
+path_train = "../data/processed/train.csv"
+path_test = "../data/processed/test.csv"
+
+df_train = pd.read_csv(
+    path_train, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+df_test = pd.read_csv(
+    path_test, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+
+# Convert time to numeric seconds since start
+start_time = df_train.index[0]
+df_train["time"] = (df_train.index - start_time).total_seconds()
+df_test["time"] = (df_test.index - start_time).total_seconds()
+```
+
+```{python}
+def prepare_gamma_target(
+    series: pd.Series,
+    epsilon: float = 1e-6,
+) -> pd.Series:
+    """Prepare a target series for Gamma-family models.
+
+    Ensures strictly positive values by applying a small shift if needed.
+
+    Args:
+        series: Input target series.
+        epsilon: Small positive constant added when zeros are present.
+
+    Returns:
+        A strictly positive pandas Series.
+
+    Raises:
+        ValueError: If series is empty or contains negative values.
+    """
+    if series is None or series.empty:
+        raise ValueError("Input series is empty.")
+
+    if (series < 0).any():
+        raise ValueError(
+            "Gamma distribution does not support negative values."
+        )
+
+    series = series.copy()
+
+    if (series == 0).any():
+        series = series + epsilon
+
+    return series
+
+
+def plot_forecast_vs_actual(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None,
+    y_pred_test_lower: Optional[pd.Series] = None,
+    y_pred_test_upper: Optional[pd.Series] = None,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (12, 6)
+) -> None:
+    """Plot actual and predicted values for train and test sets with confidence intervals.
+
+    The function draws the full time series from train and test, and
+    overlays the predictions if they are provided. Confidence intervals
+    are shown as shaded bands for the test set. The plot is
+    generated using Plotly with legend interaction enabled.
+
+    Args:
+        y_train: True target values for the training period.
+        y_test: True target values for the test period.
+        y_pred_train: Predicted values for the training period.
+        y_pred_test: Predicted values for the test period.
+        y_pred_test_lower: Lower confidence interval for test predictions.
+        y_pred_test_upper: Upper confidence interval for test predictions.
+        model_name: Name of the model to show in the title.
+        figsize: Size of the figure in inches (width, height).
+
+    Raises:
+        TypeError: If y_train or y_test are not pandas Series.
+    """
+    if not isinstance(y_train, pd.Series):
+        raise TypeError("Parameter 'y_train' must be a pandas Series.")
+    if not isinstance(y_test, pd.Series):
+        raise TypeError("Parameter 'y_test' must be a pandas Series.")
+
+    # Convert figsize (inches) roughly to pixels for plotly
+    width_px = int(figsize[0] * 80)
+    height_px = int(figsize[1] * 80)
+
+    fig = go.Figure()
+
+    # Train actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_train.index,
+            y=y_train.values,
+            mode="lines",
+            name="Train (actual)",
+            line=dict(color="black", width=2),
+        )
+    )
+
+    # Test actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_test.index,
+            y=y_test.values,
+            mode="lines",
+            name="Test (actual)",
+            line=dict(color="black", width=2),
+        )
+    )
+
+    # Train predicted (blue dashed - GLARMA)
+    if y_pred_train is not None:
+        y_pred_train = y_pred_train.reindex(y_train.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_train.index,
+                y=y_pred_train.values,
+                mode="lines",
+                name="Train (predicted)",
+                line=dict(color="royalblue", dash="dash"),
+            )
+        )
+
+    # Test predicted confidence interval (light blue band)
+    if y_pred_test_upper is not None and y_pred_test_lower is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_test_upper.index.tolist() + y_pred_test_lower.index.tolist()[::-1],
+                y=y_pred_test_upper.values.tolist() + y_pred_test_lower.values.tolist()[::-1],
+                fill="toself",
+                fillcolor="rgba(65, 105, 225, 0.2)",  # Light royalblue with transparency
+                line=dict(color="rgba(255,255,255,0)"),
+                showlegend=True,
+                name="95% CI",
+            )
+        )
+
+    # Test predicted (blue dashed - GLARMA)
+    if y_pred_test is not None:
+        y_pred_test = y_pred_test.reindex(y_test.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_test.index,
+                y=y_pred_test.values,
+                mode="lines",
+                name="Test (predicted)",
+                line=dict(color="royalblue", dash="dash"),
+            )
+        )
+
+    title = "Actual vs. Predicted"
+    if model_name:
+        title += f" - {model_name}"
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Time",
+        yaxis_title=target,
+        width=width_px,
+        height=height_px,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+        ),
+        template="plotly_white",
+        hovermode="x unified",
+    )
+
+    # Adicionar destaque cinza para o período de testes
+    fig.add_vrect(
+        x0=y_test.index[0],
+        x1=y_test.index[-1],
+        fillcolor="lightgray",
+        opacity=0.2,
+        layer="below",
+        line_width=0,
+    )
+
+    fig.show()
+
+
+def rolling_prediction_glarma_like_train(
+    result,
+    y_train: pd.Series,
+) -> pd.Series:
+    """Compute in-sample rolling 1-step-ahead predictions for training data.
+
+    Each prediction at time t is based only on information up to t-1,
+    ensuring a fair comparison with rolling forecasts on the test set.
+    """
+    predictions = []
+
+    for t in range(1, len(y_train)):
+        pred = result.get_prediction(
+            start=y_train.index[t],
+            end=y_train.index[t],
+            dynamic=y_train.index[t - 1],
+        ).predicted_mean.iloc[0]
+
+        predictions.append(float(np.exp(pred)))
+
+    predictions = [np.nan] + predictions
+
+    return pd.Series(
+        predictions,
+        index=y_train.index,
+        name="glarma_like_train_pred",
+    )
+
+
+def rolling_forecast_glarma_like(
+    result,
+    y_train: pd.Series,
+    y_test: pd.Series,
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """Rolling 1-step-ahead forecast for GLARMA-like Gamma(log) model.
+    
+    Returns: (predictions, lower_conf, upper_conf)
+    """
+    predictions = []
+    lower_bounds = []
+    upper_bounds = []
+    current_result = result
+
+    for t in range(len(y_test)):
+        # 1-step-ahead forecast with confidence intervals (log-scale)
+        forecast_obj = current_result.get_forecast(steps=1)
+        pred_log = forecast_obj.predicted_mean.iloc[0]
+        
+        # Confidence interval (default 95%)
+        conf_int = forecast_obj.conf_int().iloc[0]
+        lower_log = conf_int[0]
+        upper_log = conf_int[1]
+        
+        # Convert from log scale back to original scale
+        predictions.append(float(np.exp(pred_log)))
+        lower_bounds.append(float(np.exp(lower_log)))
+        upper_bounds.append(float(np.exp(upper_log)))
+
+        # Atualiza o estado com o valor observado
+        observed_log = np.log(y_test.iloc[t])
+        current_result = current_result.append(
+            [observed_log],
+            refit=False,
+        )
+
+    return (
+        pd.Series(predictions, index=y_test.index, name="glarma_pred"),
+        pd.Series(lower_bounds, index=y_test.index, name="glarma_lower"),
+        pd.Series(upper_bounds, index=y_test.index, name="glarma_upper"),
+    )
+
+
+def compute_glarma_residuals(
+    result,
+    y: pd.Series,
+) -> pd.Series:
+    """Compute residuals for GLARMA-like Gamma(log) model.
+
+    Residuals are computed in the linear predictor (log) scale:
+    residual_t = log(y_t) - E[log(y_t) | F_{t-1}]
+    """
+    y_log = np.log(y)
+
+    fitted_log = result.fittedvalues.reindex(y.index)
+
+    residuals = y_log - fitted_log
+
+    return pd.Series(
+        residuals,
+        index=y.index,
+        name="glarma_residuals_log",
+    )
+
+
+def residuals_diagnostics(
+    residuals: pd.Series,
+    lags: int = 10,
+) -> pd.DataFrame:
+    """Statistical diagnostics for GLARMA residuals."""
+    res = residuals.dropna()
+
+    # Ljung-Box test
+    lb = acorr_ljungbox(res, lags=[lags], return_df=True)
+
+    # Jarque-Bera test (SciPy >= 1.8)
+    jb_stat, jb_p = jarque_bera(res)
+
+    return pd.DataFrame(
+        {
+            "Statistic": [
+                lb["lb_stat"].iloc[0],
+                jb_stat,
+            ],
+            "p-value": [
+                lb["lb_pvalue"].iloc[0],
+                jb_p,
+            ],
+        },
+        index=[
+            f"Ljung-Box (lag {lags})",
+            "Jarque-Bera",
+        ],
+    )
+
+
+def calculate_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+) -> pd.DataFrame:
+    """Calculate MAE, RMSE, and MAPE metrics.
+
+    Args:
+        y_true: Actual values.
+        y_pred: Predicted values.
+
+    Returns:
+        DataFrame with metrics.
+    """
+    # Align indices and remove NaN values
+    aligned_true = y_true.reindex(y_pred.index)
+    valid_mask = ~(aligned_true.isna() | y_pred.isna())
+    
+    y_true_clean = aligned_true[valid_mask]
+    y_pred_clean = y_pred[valid_mask]
+
+    # MAE: Mean Absolute Error
+    mae = np.mean(np.abs(y_true_clean - y_pred_clean))
+
+    # RMSE: Root Mean Squared Error
+    rmse = np.sqrt(np.mean((y_true_clean - y_pred_clean) ** 2))
+
+    # MAPE: Mean Absolute Percentage Error
+    mape = np.mean(np.abs((y_true_clean - y_pred_clean) / y_true_clean)) * 100
+
+    return pd.DataFrame(
+        {
+            "Metric": ["MAE", "RMSE", "MAPE (%)"],
+            "Value": [mae, rmse, mape],
+        }
+    )
+
+
+def plot_glarma_diagnostics(
+    residuals: pd.Series,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (15, 8),
+    nlags: int = 24,
+) -> None:
+    """Plot diagnostic panel for GLARMA-like Gamma(log) model residuals using matplotlib.
+
+    The panel includes:
+    1) Residuals over time
+    2) ACF of residuals
+    3) PACF of residuals
+    4) Histogram of residuals
+    5) Q–Q plot
+
+    Args:
+        residuals: Residuals in log-scale.
+        model_name: Name of the model for the title.
+        figsize: Size of the figure in inches (width, height).
+        nlags: Number of lags for ACF and PACF.
+    """
+    res = residuals.dropna()
+
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+    fig.suptitle(
+        f"Diagnostics - {model_name}" if model_name else "Diagnostics",
+        fontsize=14,
+        y=1.00,
+    )
+
+    # 1) Residuals over time
+    axes[0, 0].plot(res.index, res.values, lw=1)
+    axes[0, 0].axhline(y=0, color="r", linestyle="--", lw=1)
+    axes[0, 0].set_title("Residuals over time")
+    axes[0, 0].set_ylabel("Residual (log scale)")
+    axes[0, 0].tick_params(axis='x', rotation=45)
+    plt.setp(axes[0, 0].xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+    # 2) ACF
+    axes[0, 1].clear()
+    plot_acf(res, lags=nlags, ax=axes[0, 1])
+    axes[0, 1].set_title("ACF")
+
+    # 3) PACF
+    axes[0, 2].clear()
+    plot_pacf(res, lags=nlags, ax=axes[0, 2], method="ywm")
+    axes[0, 2].set_title("PACF")
+
+    # 4) Histogram
+    axes[1, 0].hist(res.values, bins=30, edgecolor="black", alpha=0.7)
+    axes[1, 0].set_title("Histogram of residuals")
+    axes[1, 0].set_xlabel("Residual")
+    axes[1, 0].set_ylabel("Frequency")
+
+    # 5) Q-Q plot
+    qq = stats.probplot(res, dist="norm")
+    axes[1, 1].scatter(qq[0][0], qq[0][1], alpha=0.6, s=30)
+    axes[1, 1].plot(qq[0][0], qq[1][0] * qq[0][0] + qq[1][1], "r--", lw=2)
+    axes[1, 1].set_title("Q–Q plot")
+    axes[1, 1].set_xlabel("Theoretical quantiles")
+    axes[1, 1].set_ylabel("Sample quantiles")
+
+    # Turn off empty subplot
+    axes[1, 2].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def fit_lognormal_glm(
+    x_train: pd.Series,
+    y_train: pd.Series
+) -> Tuple[sm.GLM, pd.Series]:
+    """Fit a lognormal GLM using time as covariate.
+
+    The model assumes Y ~ Lognormal and fits a Gaussian GLM on log(Y),
+    enabling statistical inference and prediction.
+
+    Args:
+        x_train: Training covariate (time).
+        y_train: Training response variable (positive, continuous).
+        x_test: Test covariate (time).
+
+    Returns:
+        A tuple containing:
+            - Fitted GLM results object.
+    """
+    if (y_train <= 0).any():
+        raise ValueError("Response variable must be strictly positive.")
+
+    x_train_const = sm.add_constant(x_train)
+
+    log_y_train = np.log(y_train)
+
+    model = sm.GLM(
+        log_y_train,
+        x_train_const,
+        family=sm.families.Gaussian(),
+    )
+
+    results = model.fit()
+
+    return results
+
+
+def summarize_arima_model(
+    model_result: ARIMAResults,
+    model_name: str,
+    y_train: Optional[pd.Series] = None,
+    y_test: Optional[pd.Series] = None,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None
+) -> pd.DataFrame:
+    """Create a summary table with ARIMA information and metrics.
+
+    This function gathers AIC, BIC and (optionally) regression metrics
+    for train and test sets.
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        model_name: Name or identifier of the model, for example
+            "ARIMA(1,1,1)".
+        y_train: True target values for the training set.
+        y_test: True target values for the test set.
+        y_pred_train: Predicted values on the training set.
+        y_pred_test: Predicted values on the test set.
+
+    Returns:
+        A pandas DataFrame with one row containing model name, AIC, BIC
+        and available metrics (train_*, test_*).
+
+    Raises:
+        AttributeError: If the model does not provide aic or bic
+            attributes.
+    """
+    if not hasattr(model_result, "aic") or not hasattr(
+        model_result,
+        "bic",
+    ):
+        raise AttributeError(
+            "Model must have 'aic' and 'bic' attributes."
+        )
+
+    data: Dict[str, float] = {
+        "model": model_name,
+        "aic": float(model_result.aic),
+        "bic": float(model_result.bic),
+    }
+
+    if y_train is not None and y_pred_train is not None:
+        train_metrics = compute_regression_metrics(
+            y_true=y_train,
+            y_pred=y_pred_train,
+            prefix="train_",
+        )
+        data.update(train_metrics)
+
+    if y_test is not None and y_pred_test is not None:
+        test_metrics = compute_regression_metrics(
+            y_true=y_test,
+            y_pred=y_pred_test,
+            prefix="test_",
+        )
+        data.update(test_metrics)
+
+    summary_df = pd.DataFrame([data])
+
+    return summary_df
+
+
+def compute_regression_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    prefix: str = ""
+) -> Dict[str, float]:
+    """Compute common regression metrics for time series.
+
+    The function calculates MAE, RMSE and MAPE. It expects y_true and
+    y_pred to be aligned on the same index.
+
+    Args:
+        y_true: True target values as a pandas Series.
+        y_pred: Predicted target values as a pandas Series.
+        prefix: Optional prefix to add to each metric name in the
+            returned dictionary (for example "train_" or "test_").
+
+    Returns:
+        Dictionary with metrics as keys and their values as floats.
+
+    Raises:
+        ValueError: If y_true and y_pred do not have the same length
+            or if y_true contains only zeros when computing MAPE.
+        TypeError: If y_true or y_pred are not pandas Series.
+    """
+    if not isinstance(y_true, pd.Series):
+        raise TypeError("Parameter 'y_true' must be a pandas Series.")
+    if not isinstance(y_pred, pd.Series):
+        raise TypeError("Parameter 'y_pred' must be a pandas Series.")
+
+    if len(y_true) != len(y_pred):
+        raise ValueError(
+            "y_true and y_pred must have the same length."
+        )
+
+    # Align indices just in case
+    y_true, y_pred = y_true.align(y_pred, join="inner")
+
+    mae = mean_absolute_error(y_true, y_pred)
+
+    # Older versions of scikit-learn do not support 'squared' argument,
+    # so we compute RMSE manually as the square root of MSE.
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = float(np.sqrt(mse))
+
+    if np.any(y_true == 0):
+        raise ValueError(
+            "MAPE is undefined when y_true contains zeros."
+        )
+
+    mape = float(
+        np.mean(np.abs((y_true - y_pred) / y_true)) * 100.0
+    )
+
+    metrics: Dict[str, float] = {
+        f"{prefix}mae": float(mae),
+        f"{prefix}rmse": rmse,
+        f"{prefix}mape": mape,
+    }
+
+    return metrics
+```
+
+```{python}
+target = "% Silica Concentrate"
+
+X_train = df_train["time"]
+X_test = df_test["time"]
+
+y_train = df_train[target].dropna()
+y_test = df_test[target].dropna()
+```
+
+
+## Modelo GLM Lognormal
+
+```{python}
+model = fit_lognormal_glm(X_train, y_train)
+model.summary()
+```
+
+```{python}
+residuals_train = compute_glarma_residuals(
+    result=model,
+    y=y_train,
+)
+
+residuals_test = compute_glarma_residuals(
+    result=model,
+    y=y_test,
+)
+```
+
+```{python}
+plot_glarma_diagnostics(
+    residuals=residuals_train,
+    model_name="Lognormal GLM (time)",
+    nlags=40,
+)
+```
+
+```{python}
+residuals_diagnostics(
+    residuals=residuals_train,
+    lags=10,
+)
+```
+
+```{python}
+y_pred_train = np.exp(model.predict(sm.add_constant(X_train)))
+metrics_train = calculate_metrics(
+    y_true=y_train, y_pred=y_pred_train)
+metrics_train
+```
+
+
+```{python}
+y_pred_test = np.exp(model.predict(sm.add_constant(X_test)))
+metrics_test = calculate_metrics(
+    y_true=y_test, y_pred=y_pred_test)
+```
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train,
+    y_pred_test=y_pred_test,
+    model_name="GLM (lognormal with time)",
+)
+```
+
+## Análise de resíduos do GLM
+
+```{python}
+_ = plot_acf(
+    residuals_train.dropna(),
+    lags=40,
+    title="ACF of GLM Residuals (log scale)",
+)
+```
+
+```{python}
+_ = plot_pacf(
+    residuals_train.dropna(),
+    lags=40,
+    title="PACF of GLM Residuals (log scale)",
+)
+```
+
+Podemos modelar os resíduos como um processo ARIMA
+
+Candidatos:
+
+- (1,0,1)
+- (2,0,0)
+- (3,0,0)
+
+### ARIMA(1,0,1)
+
+```{python}
+y_train_residues = residuals_train
+y_test_residues = residuals_test
+
+model_residues = ARIMA(residuals_train, order=(1, 0, 1)).fit()
+
+print("AIC:", model_residues.aic)
+print("BIC:", model_residues.bic)
+print(model_residues.summary())
+
+y_pred_train_residues = model_residues.predict(
+    start=y_train_residues.index[0],
+    end=y_train_residues.index[-1],
+)
+y_pred_test_residues = model_residues.predict(
+    start=y_test_residues.index[0],
+    end=y_test_residues.index[-1],
+)
+
+summary_residues = summarize_arima_model(
+    model_result=model_residues,
+    model_name="ARIMA(1,0,1)",
+    y_train=y_train_residues,
+    y_test=None,
+    y_pred_train=y_pred_train_residues,
+    y_pred_test=None,
+)
+print()
+print("Summary metrics - Residues as ARIMA(1,0,1):")
+print(summary_residues)
+```
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train_residues,
+    y_test=y_test_residues,
+    y_pred_train=y_pred_train_residues,
+    y_pred_test=y_pred_test_residues,
+    model_name="log(Residuals) ARIMA(1,0,1)",
+)
+```
+
+### ARIMA(2,0,0)
+
+```{python}
+y_train_residues = residuals_train
+y_test_residues = residuals_test
+
+model_residues = ARIMA(residuals_train, order=(2, 0, 0)).fit()
+
+print("AIC:", model_residues.aic)
+print("BIC:", model_residues.bic)
+print(model_residues.summary())
+
+y_pred_train_residues = model_residues.predict(
+    start=y_train_residues.index[0],
+    end=y_train_residues.index[-1],
+)
+y_pred_test_residues = model_residues.predict(
+    start=y_test_residues.index[0],
+    end=y_test_residues.index[-1],
+)
+
+summary_residues = summarize_arima_model(
+    model_result=model_residues,
+    model_name="ARIMA(2,0,0)",
+    y_train=y_train_residues,
+    y_test=None,
+    y_pred_train=y_pred_train_residues,
+    y_pred_test=None,
+)
+print()
+print("Summary metrics - Residues as ARIMA(2,0,0):")
+print(summary_residues)
+```
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train_residues,
+    y_test=y_test_residues,
+    y_pred_train=y_pred_train_residues,
+    y_pred_test=y_pred_test_residues,
+    model_name="log(Residuals) ARIMA(2,0,0)",
+)
+```
+
+### ARIMA(3,0,0)
+
+```{python}
+y_train_residues = residuals_train
+y_test_residues = residuals_test
+
+model_residues = ARIMA(residuals_train, order=(3, 0, 0)).fit()
+
+print("AIC:", model_residues.aic)
+print("BIC:", model_residues.bic)
+print(model_residues.summary())
+
+y_pred_train_residues = model_residues.predict(
+    start=y_train_residues.index[0],
+    end=y_train_residues.index[-1],
+)
+y_pred_test_residues = model_residues.predict(
+    start=y_test_residues.index[0],
+    end=y_test_residues.index[-1],
+)
+
+summary_residues = summarize_arima_model(
+    model_result=model_residues,
+    model_name="ARIMA(3,0,0)",
+    y_train=y_train_residues,
+    y_test=None,
+    y_pred_train=y_pred_train_residues,
+    y_pred_test=None,
+)
+print()
+print("Summary metrics - Residues as ARIMA(3,0,0):")
+print(summary_residues)
+```
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train_residues,
+    y_test=y_test_residues,
+    y_pred_train=y_pred_train_residues,
+    y_pred_test=y_pred_test_residues,
+    model_name="log(Residuals) ARIMA(3,0,0)",
+)
+```
+
+## GLM Lognormal com tempo e AR(3)
+
+O modelo usa `time` e os resíduos defasados em 1 passo (`resid_ar1`) como covariáveis.
+Como `resid_ar1` já está em escala logarítmica, ele entra diretamente no preditor linear.
+
+```{python}
+resid_ar1_train = residuals_train.shift(1)
+resid_ar2_train = residuals_train.shift(2)
+resid_ar3_train = residuals_train.shift(3)
+resid_ar1_test  = residuals_test.shift(1)
+resid_ar2_test  = residuals_test.shift(2)
+resid_ar3_test  = residuals_test.shift(3)
+
+X_train_glarma_3_0_0 = sm.add_constant(
+    pd.DataFrame({"time": X_train,
+    "resid_ar1": resid_ar1_train,
+    "resid_ar2": resid_ar2_train,
+    "resid_ar3": resid_ar3_train}))
+X_test_glarma_3_0_0  = sm.add_constant(
+    pd.DataFrame({"time": X_test,
+    "resid_ar1": resid_ar1_test,
+    "resid_ar2": resid_ar2_test,
+    "resid_ar3": resid_ar3_test}))
+
+log_y_train = np.log(y_train)
+
+model_glarma_3_0_0 = sm.GLM(
+    log_y_train, X_train_glarma_3_0_0, family=sm.families.Gaussian(),
+    missing="drop").fit()
+model_glarma_3_0_0.summary()
+```
+
+```{python}
+pd.DataFrame({"AIC": [model_glarma_3_0_0.aic], "BIC": [model_glarma_3_0_0.bic]}, index=["GLM Lognormal (time + resid_ar1,2,3)"])
+```
+
+```{python}
+y_pred_train_glarma_3_0_0 = np.exp(model_glarma_3_0_0.predict(X_train_glarma_3_0_0))
+y_pred_test_glarma_3_0_0  = np.exp(
+    model_glarma_3_0_0.predict(X_test_glarma_3_0_0))
+
+metrics_train_glarma_3_0_0 = calculate_metrics(
+    y_true=y_train, y_pred=y_pred_train_glarma_3_0_0)
+metrics_test_glarma_3_0_0  = calculate_metrics(
+    y_true=y_test,  y_pred=y_pred_test_glarma_3_0_0)
+
+print("Train metrics:")
+print(metrics_train_glarma_3_0_0)
+print("\nTest metrics:")
+print(metrics_test_glarma_3_0_0)
+```
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_glarma_3_0_0,
+    y_pred_test=y_pred_test_glarma_3_0_0,
+    model_name="GLM Lognormal (time + resid(3,0,0))",
+)
+```
+
+```{python}
+residuals_glarma_3_0_0 = compute_glarma_residuals(
+    result=model_glarma_3_0_0, y=y_train)
+
+plot_glarma_diagnostics(
+    residuals=residuals_glarma_3_0_0,
+    model_name="GLM Lognormal (time + resid(3,0,0))",
+    nlags=40,
+)
+```
+
+```{python}
+residuals_diagnostics(residuals=residuals_glarma_3_0_0, lags=10)
+```
+
+## GLM Lognormal com tempo e AR(1), MA(1)
+
+O modelo ajusta um ARIMA(1,0,1) sobre os resíduos do GLM base e usa os valores ajustados como covariável.
+
+```{python}
+arima_resid_101 = ARIMA(residuals_train, order=(1, 0, 1)).fit()
+arima_fitted_101 = arima_resid_101.fittedvalues
+
+X_train_arma101 = sm.add_constant(pd.DataFrame({
+    "time":       X_train,
+    "arma_resid": arima_fitted_101
+}))
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    model_arma101 = sm.GLM(
+        np.log(y_train), X_train_arma101,
+        family=sm.families.Gaussian(), missing="drop"
+    ).fit()
+model_arma101.summary()
+```
+
+```{python}
+pd.DataFrame(
+    {"AIC": [model_arma101.aic], "BIC": [model_arma101.bic]},
+    index=["GLM Lognormal (time + ARMA(1,0,1) resid)"]
+)
+```
+
+```{python}
+y_pred_train_arma101 = np.exp(model_arma101.predict(X_train_arma101))
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    arima_test_forecast = arima_resid_101.forecast(steps=len(y_test))
+arima_test_forecast.index = X_test.index
+
+X_test_arma101 = sm.add_constant(pd.DataFrame({
+    "time":       X_test,
+    "arma_resid": arima_test_forecast
+}))
+y_pred_test_arma101 = np.exp(model_arma101.predict(X_test_arma101))
+
+print("Train metrics:")
+print(calculate_metrics(y_true=y_train, y_pred=y_pred_train_arma101))
+print("\nTest metrics:")
+print(calculate_metrics(y_true=y_test, y_pred=y_pred_test_arma101))
+```
+
+```{python}
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=y_test,
+    y_pred_train=y_pred_train_arma101,
+    y_pred_test=y_pred_test_arma101,
+    model_name="GLM Lognormal (time + ARMA(1,0,1) resid)",
+)
+```
+
+```{python}
+residuals_arma101 = compute_glarma_residuals(result=model_arma101, y=y_train)
+
+plot_glarma_diagnostics(
+    residuals=residuals_arma101,
+    model_name="GLM Lognormal (time + ARMA(1,0,1) resid)",
+    nlags=40,
+)
+```
+
+```{python}
+residuals_diagnostics(residuals=residuals_arma101, lags=10)
+```
