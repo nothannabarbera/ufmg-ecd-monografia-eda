@@ -18,7 +18,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from scipy.stats import shapiro
 from statsmodels.graphics.gofplots import qqplot
-from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
 from sklearn.metrics import mean_absolute_error, mean_squared_error
@@ -155,13 +155,14 @@ def run_residual_diagnostics(
     model_result: ARIMAResults,
     order: Tuple[int, int, int],
     lags: int = 24,
-    figsize: Tuple[int, int] = (12, 8)
+    figsize: Tuple[int, int] = (15, 8)
 ) -> None:
     """Run residual diagnostics for a fitted ARIMA model.
 
     Diagnostics include:
         - Residual time series.
         - ACF of residuals.
+        - PACF of residuals.
         - QQ plot of residuals.
         - Histogram of residuals.
         - Ljung-Box test (autocorrelation).
@@ -170,7 +171,7 @@ def run_residual_diagnostics(
     Args:
         model_result: Fitted ARIMAResults object.
         order: Tuple (p, d, q) for the ARIMA model.
-        lags: Number of lags for ACF and Ljung-Box test.
+        lags: Number of lags for ACF, PACF and Ljung-Box test.
         figsize: Figure size for the diagnostic plots.
 
     Returns:
@@ -184,29 +185,35 @@ def run_residual_diagnostics(
 
     shapiro_stat, shapiro_pvalue = shapiro(residuals)
 
-    print("Residual diagnostics for ARIMA{}:".format(order))
+    print(f"Residual diagnostics for ARIMA{order}:")
     print()
-    print("Ljung-Box test (lag = {}):".format(lags))
-    print("  Statistic: {:.4f}, p-value: {:.4f}".format(lb_stat, lb_pvalue))
+    print(f"Ljung-Box test (lag = {lags}):")
+    print(f"  Statistic: {lb_stat:.4f}, p-value: {lb_pvalue:.4f}")
     print()
     print("Shapiro-Wilk normality test:")
     print(
-        "  Statistic: {:.4f}, p-value: {:.4f}".format(
-            shapiro_stat,
-            shapiro_pvalue
-        )
+        f"  Statistic: {shapiro_stat:.4f}, "
+        f"p-value: {shapiro_pvalue:.4f}"
     )
     print("-" * 60)
 
-    fig, axes = plt.subplots(2, 2, figsize=figsize)
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
 
     residuals.plot(ax=axes[0, 0])
-    axes[0, 0].set_title("Residuals - ARIMA{}".format(order))
+    axes[0, 0].set_title(f"Residuals - ARIMA{order}")
     axes[0, 0].set_xlabel("Time")
     axes[0, 0].set_ylabel("Residual")
 
     plot_acf(residuals, lags=lags, ax=axes[0, 1])
     axes[0, 1].set_title("ACF of residuals")
+
+    plot_pacf(
+        residuals,
+        lags=lags,
+        ax=axes[0, 2],
+        method="ywm"
+    )
+    axes[0, 2].set_title("PACF of residuals")
 
     qqplot(residuals, line="s", ax=axes[1, 0])
     axes[1, 0].set_title("QQ-plot residuals")
@@ -215,6 +222,8 @@ def run_residual_diagnostics(
     axes[1, 1].set_title("Residuals histogram")
     axes[1, 1].set_xlabel("Residual")
     axes[1, 1].set_ylabel("Frequency")
+
+    axes[1, 2].axis("off")
 
     plt.tight_layout()
     plt.show()
@@ -350,12 +359,12 @@ def summarize_arima_model(
 def plot_arima_diagnostics(
     model_result: ARIMAResults,
     model_name: str = "",
-    figsize: Tuple[int, int] = (10, 8)
+    figsize: Tuple[int, int] = (15, 8)
 ) -> None:
-    """Plot standard ARIMA diagnostic charts.
+    """Plot standard ARIMA diagnostic charts including ACF and PACF.
 
-    This function is a thin wrapper around the model's
-    plot_diagnostics method, adding a customized main title.
+    This function creates diagnostic plots for ARIMA residuals including
+    time series, ACF, PACF, QQ plot, and histogram.
 
     Args:
         model_result: Fitted ARIMAResults object.
@@ -363,14 +372,42 @@ def plot_arima_diagnostics(
         figsize: Size of the figure in inches (width, height).
 
     Raises:
-        AttributeError: If the model does not provide plot_diagnostics.
+        AttributeError: If the model does not provide resid attribute.
     """
-    if not hasattr(model_result, "plot_diagnostics"):
+    if not hasattr(model_result, "resid"):
         raise AttributeError(
-            "Model does not have 'plot_diagnostics' method."
+            "Model does not have 'resid' attribute."
         )
 
-    fig = model_result.plot_diagnostics(figsize=figsize)
+    residuals = pd.Series(model_result.resid).dropna()
+
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+
+    residuals.plot(ax=axes[0, 0])
+    axes[0, 0].set_title(f"Residuals - {model_name}")
+    axes[0, 0].set_xlabel("Time")
+    axes[0, 0].set_ylabel("Residual")
+
+    # Clear axes before plotting ACF
+    axes[0, 1].clear()
+    plot_acf(residuals, lags=24, ax=axes[0, 1])
+    axes[0, 1].set_title("ACF")
+
+    # Clear axes before plotting PACF
+    axes[0, 2].clear()
+    plot_pacf(residuals, lags=24, ax=axes[0, 2], method="ywm")
+    axes[0, 2].set_title("PACF")
+
+    qqplot(residuals, line="s", ax=axes[1, 0])
+    axes[1, 0].set_title("QQ-plot residuals")
+
+    axes[1, 1].hist(residuals, bins=20, edgecolor="black")
+    axes[1, 1].set_title("Residuals histogram")
+    axes[1, 1].set_xlabel("Residual")
+    axes[1, 1].set_ylabel("Frequency")
+
+    axes[1, 2].axis("off")
+
     if model_name:
         fig.suptitle(
             f"Diagnostics - {model_name}",
