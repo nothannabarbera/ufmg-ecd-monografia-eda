@@ -1,0 +1,884 @@
+---
+title: "ARIMA: Predição para o conjunto de teste no modelo com quebra"
+author: "Hanna Tatsuta Galassi"
+date: "2026-05-12"
+format: html
+toc: true
+echo: false
+standalone: true
+---
+
+```{python}
+import warnings
+from typing import Dict, List, Tuple, Optional
+
+warnings.filterwarnings("ignore")
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import statsmodels.api as sm
+from scipy.stats import shapiro
+from statsmodels.graphics.gofplots import qqplot
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from statsmodels.stats.diagnostic import acorr_ljungbox
+from statsmodels.tsa.arima.model import ARIMA, ARIMAResults
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+```
+
+
+```{python}
+path_train = "../data/processed/train.csv"
+path_test = "../data/processed/test.csv"
+path_train_break = "../data/processed/train_break.csv"
+path_test_break = "../data/processed/test_break.csv"
+
+df_train = pd.read_csv(
+    path_train, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+df_test = pd.read_csv(
+    path_test, index_col="date_fixed", parse_dates=["date_fixed"]
+)
+```
+
+```{python}
+target = "% Silica Concentrate"
+```
+
+```{python}
+df_train_log = df_train.apply(lambda x: np.log(x) if x.name == target else x)
+df_test_log = df_test.apply(lambda x: np.log(x) if x.name == target else x)
+
+y_train = df_train_log[target]
+y_test = df_test_log[target]
+```
+
+```{python}
+def fit_arima_candidates(
+    series: pd.Series,
+    model_orders: List[Tuple[int, int, int]]
+) -> Tuple[pd.DataFrame, Dict[Tuple[int, int, int], ARIMAResults]]:
+    """Fit multiple ARIMA models and compare by information criteria.
+
+    Args:
+        series: Input time series as a pandas Series.
+        model_orders: List of (p, d, q) tuples representing ARIMA orders.
+
+    Returns:
+        A tuple containing:
+            - results_df: DataFrame with model order, AIC and BIC.
+            - fitted_models: Dictionary mapping (p, d, q) to ARIMAResults.
+
+    Raises:
+        ValueError: If the input series is empty or None.
+    """
+    if series is None or len(series) == 0:
+        raise ValueError("Input series is empty or None.")
+
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError("Series index must be a DatetimeIndex.")
+
+    series_clean = series.dropna()
+
+    fitted_models: Dict[Tuple[int, int, int], ARIMAResults] = {}
+    rows: List[Dict[str, float]] = []
+
+    for order in model_orders:
+        p, d, q = order
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                model = ARIMA(
+                    series_clean,
+                    order=(p, d, q),
+                    enforce_stationarity=False,
+                    enforce_invertibility=False
+                )
+                result = model.fit()
+        except Exception as exc:
+            rows.append(
+                {
+                    "p": p,
+                    "d": d,
+                    "q": q,
+                    "aic": np.nan,
+                    "bic": np.nan,
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        fitted_models[order] = result
+        rows.append(
+            {
+                "p": p,
+                "d": d,
+                "q": q,
+                "aic": result.aic,
+                "bic": result.bic,
+                "error": "",
+            }
+        )
+
+    results_df = pd.DataFrame(rows)
+    results_df = results_df.sort_values(by="aic", ascending=True)
+
+    return results_df, fitted_models
+
+
+def select_best_model_by_aic(
+    results_df: pd.DataFrame,
+    fitted_models: Dict[Tuple[int, int, int], ARIMAResults]
+) -> ARIMAResults:
+    """Select the ARIMA model with the lowest AIC.
+
+    Args:
+        results_df: DataFrame returned by fit_arima_candidates.
+        fitted_models: Dictionary of fitted ARIMA models.
+
+    Returns:
+        The ARIMAResults instance with the lowest AIC.
+
+    Raises:
+        ValueError: If no valid model is found.
+    """
+    valid_df = results_df.dropna(subset=["aic"])
+
+    if valid_df.empty:
+        raise ValueError("No valid model with finite AIC was found.")
+
+    best_row = valid_df.iloc[0]
+    best_order = (int(best_row["p"]), int(best_row["d"]), int(best_row["q"]))
+
+    if best_order not in fitted_models:
+        raise ValueError(
+            "Best model order not present in fitted_models dictionary."
+        )
+
+    return fitted_models[best_order]
+
+
+def run_residual_diagnostics(
+    model_result: ARIMAResults,
+    order: Tuple[int, int, int],
+    lags: int = 24,
+    figsize: Tuple[int, int] = (15, 8)
+) -> None:
+    """Run residual diagnostics for a fitted ARIMA model.
+
+    Diagnostics include:
+        - Residual time series.
+        - ACF of residuals.
+        - PACF of residuals.
+        - QQ plot of residuals.
+        - Histogram of residuals.
+        - Ljung-Box test (autocorrelation).
+        - Shapiro-Wilk test (normality).
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        order: Tuple (p, d, q) for the ARIMA model.
+        lags: Number of lags for ACF, PACF and Ljung-Box test.
+        figsize: Figure size for the diagnostic plots.
+
+    Returns:
+        None. Prints test results and shows plots.
+    """
+    residuals = pd.Series(model_result.resid).dropna()
+
+    lb_test = acorr_ljungbox(residuals, lags=[lags], return_df=True)
+    lb_stat = float(lb_test["lb_stat"].iloc[0])
+    lb_pvalue = float(lb_test["lb_pvalue"].iloc[0])
+
+    shapiro_stat, shapiro_pvalue = shapiro(residuals)
+
+    print(f"Residual diagnostics for ARIMA{order}:")
+    print()
+    print(f"Ljung-Box test (lag = {lags}):")
+    print(f"  Statistic: {lb_stat:.4f}, p-value: {lb_pvalue:.4f}")
+    print()
+    print("Shapiro-Wilk normality test:")
+    print(
+        f"  Statistic: {shapiro_stat:.4f}, "
+        f"p-value: {shapiro_pvalue:.4f}"
+    )
+    print("-" * 60)
+
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+
+    residuals.plot(ax=axes[0, 0])
+    axes[0, 0].set_title(f"Residuals - ARIMA{order}")
+    axes[0, 0].set_xlabel("Time")
+    axes[0, 0].set_ylabel("Residual")
+
+    plot_acf(residuals, lags=lags, ax=axes[0, 1])
+    axes[0, 1].set_title("ACF")
+
+    plot_pacf(
+        residuals,
+        lags=lags,
+        ax=axes[0, 2],
+        method="ywm"
+    )
+    axes[0, 2].set_title("PACF")
+
+    qqplot(residuals, line="s", ax=axes[1, 0])
+    axes[1, 0].set_title("QQ-plot residuals")
+
+    axes[1, 1].hist(residuals, bins=20, edgecolor="black")
+    axes[1, 1].set_title("Residuals histogram")
+    axes[1, 1].set_xlabel("Residual")
+    axes[1, 1].set_ylabel("Frequency")
+
+    axes[1, 2].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def compute_regression_metrics(
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    prefix: str = ""
+) -> Dict[str, float]:
+    """Compute common regression metrics for time series.
+
+    The function calculates MAE, RMSE and MAPE. It expects y_true and
+    y_pred to be aligned on the same index.
+
+    Args:
+        y_true: True target values as a pandas Series.
+        y_pred: Predicted target values as a pandas Series.
+        prefix: Optional prefix to add to each metric name in the
+            returned dictionary (for example "train_" or "test_").
+
+    Returns:
+        Dictionary with metrics as keys and their values as floats.
+
+    Raises:
+        ValueError: If y_true and y_pred do not have the same length
+            or if y_true contains only zeros when computing MAPE.
+        TypeError: If y_true or y_pred are not pandas Series.
+    """
+    if not isinstance(y_true, pd.Series):
+        raise TypeError("Parameter 'y_true' must be a pandas Series.")
+    if not isinstance(y_pred, pd.Series):
+        raise TypeError("Parameter 'y_pred' must be a pandas Series.")
+
+    if len(y_true) != len(y_pred):
+        raise ValueError(
+            "y_true and y_pred must have the same length."
+        )
+
+    # Predictions from statsmodels.predict may use integer index; reset to match y_true
+    y_pred = pd.Series(y_pred.values, index=y_true.index)
+
+    mae = mean_absolute_error(y_true, y_pred)
+
+    # Older versions of scikit-learn do not support 'squared' argument,
+    # so we compute RMSE manually as the square root of MSE.
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = float(np.sqrt(mse))
+
+    if np.any(y_true == 0):
+        warnings.warn(
+            "y_true contains zero values; MAPE will be computed only on nonzero targets.",
+            UserWarning,
+        )
+        nonzero_mask = y_true != 0
+        if not np.any(nonzero_mask):
+            mape = float("nan")
+        else:
+            y_true_nonzero = y_true[nonzero_mask]
+            y_pred_nonzero = y_pred[nonzero_mask]
+            mape = float(
+                np.mean(
+                    np.abs((y_true_nonzero - y_pred_nonzero) / y_true_nonzero)
+                ) * 100.0
+            )
+    else:
+        mape = float(
+            np.mean(np.abs((y_true - y_pred) / y_true)) * 100.0
+        )
+
+    metrics: Dict[str, float] = {
+        f"{prefix}mae": float(mae),
+        f"{prefix}rmse": rmse,
+        f"{prefix}mape": mape,
+    }
+
+    return metrics
+
+
+def summarize_arima_model(
+    model_result: ARIMAResults,
+    model_name: str,
+    y_train: Optional[pd.Series] = None,
+    y_test: Optional[pd.Series] = None,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None
+) -> pd.DataFrame:
+    """Create a summary table with ARIMA information and metrics.
+
+    This function gathers AIC, BIC and (optionally) regression metrics
+    for train and test sets.
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        model_name: Name or identifier of the model, for example
+            "ARIMA(1,1,1)".
+        y_train: True target values for the training set.
+        y_test: True target values for the test set.
+        y_pred_train: Predicted values on the training set.
+        y_pred_test: Predicted values on the test set.
+
+    Returns:
+        A pandas DataFrame with one row containing model name, AIC, BIC
+        and available metrics (train_*, test_*).
+
+    Raises:
+        AttributeError: If the model does not provide aic or bic
+            attributes.
+    """
+    if not hasattr(model_result, "aic") or not hasattr(
+        model_result,
+        "bic",
+    ):
+        raise AttributeError(
+            "Model must have 'aic' and 'bic' attributes."
+        )
+
+    data: Dict[str, float] = {
+        "model": model_name,
+        "aic": float(model_result.aic),
+        "bic": float(model_result.bic),
+    }
+
+    if y_train is not None and y_pred_train is not None:
+        train_metrics = compute_regression_metrics(
+            y_true=y_train,
+            y_pred=y_pred_train,
+            prefix="train_",
+        )
+        data.update(train_metrics)
+
+    if y_test is not None and y_pred_test is not None:
+        test_metrics = compute_regression_metrics(
+            y_true=y_test,
+            y_pred=y_pred_test,
+            prefix="test_",
+        )
+        data.update(test_metrics)
+
+    summary_df = pd.DataFrame([data])
+
+    return summary_df
+
+
+def plot_arima_diagnostics(
+    model_result: ARIMAResults,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (15, 8)
+) -> None:
+    """Plot standard ARIMA diagnostic charts including ACF and PACF.
+
+    This function creates diagnostic plots for ARIMA residuals including
+    time series, ACF, PACF, QQ plot, and histogram.
+
+    Args:
+        model_result: Fitted ARIMAResults object.
+        model_name: Name of the model to show in the figure title.
+        figsize: Size of the figure in inches (width, height).
+
+    Raises:
+        AttributeError: If the model does not provide resid attribute.
+    """
+    if not hasattr(model_result, "resid"):
+        raise AttributeError(
+            "Model does not have 'resid' attribute."
+        )
+
+    residuals = pd.Series(model_result.resid).dropna()
+
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+
+    residuals.plot(ax=axes[0, 0])
+    axes[0, 0].set_title(f"Residuals - {model_name}")
+    axes[0, 0].set_xlabel("Time")
+    axes[0, 0].set_ylabel("Residual")
+
+    # Clear axes before plotting ACF
+    axes[0, 1].clear()
+    plot_acf(residuals, lags=24, ax=axes[0, 1])
+    axes[0, 1].set_title("ACF")
+
+    # Clear axes before plotting PACF
+    axes[0, 2].clear()
+    plot_pacf(residuals, lags=24, ax=axes[0, 2], method="ywm")
+    axes[0, 2].set_title("PACF")
+
+    qqplot(residuals, line="s", ax=axes[1, 0])
+    axes[1, 0].set_title("QQ-plot residuals")
+
+    axes[1, 1].hist(residuals, bins=20, edgecolor="black")
+    axes[1, 1].set_title("Residuals histogram")
+    axes[1, 1].set_xlabel("Residual")
+    axes[1, 1].set_ylabel("Frequency")
+
+    axes[1, 2].axis("off")
+
+    if model_name:
+        fig.suptitle(
+            f"Diagnostics - {model_name}",
+            fontsize=14,
+            y=1.02,
+        )
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_forecast_vs_actual(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    y_pred_train: Optional[pd.Series] = None,
+    y_pred_test: Optional[pd.Series] = None,
+    model_name: str = "",
+    figsize: Tuple[int, int] = (12, 6)
+) -> None:
+    """Plot actual and predicted values for train and test sets.
+
+    The function draws the full time series from train and test, and
+    overlays the predictions if they are provided. The plot is
+    generated using Plotly.
+
+    Args:
+        y_train: True target values for the training period.
+        y_test: True target values for the test period.
+        y_pred_train: Predicted values for the training period.
+        y_pred_test: Predicted values for the test period.
+        model_name: Name of the model to show in the title.
+        figsize: Size of the figure in inches (width, height). This
+            argument is kept for compatibility, although Plotly uses
+            pixel-based sizing.
+
+    Raises:
+        TypeError: If y_train or y_test are not pandas Series.
+    """
+    if not isinstance(y_train, pd.Series):
+        raise TypeError("Parameter 'y_train' must be a pandas Series.")
+    if not isinstance(y_test, pd.Series):
+        raise TypeError("Parameter 'y_test' must be a pandas Series.")
+
+    # Convert figsize (inches) roughly to pixels for plotly
+    width_px = int(figsize[0] * 80)
+    height_px = int(figsize[1] * 80)
+
+    fig = go.Figure()
+
+    # Train actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_train.index,
+            y=y_train.values,
+            mode="lines",
+            name="Train (actual)",
+            line=dict(color="black", width=2),
+        )
+    )
+
+    # Test actual (black solid)
+    fig.add_trace(
+        go.Scatter(
+            x=y_test.index,
+            y=y_test.values,
+            mode="lines",
+            name="Test (actual)",
+            line=dict(color="black", width=2),
+        )
+    )
+
+    # Train predicted (orange dashed)
+    if y_pred_train is not None:
+        y_pred_train = y_pred_train.reindex(y_train.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_train.index,
+                y=y_pred_train.values,
+                mode="lines",
+                name="Train (predicted)",
+                line=dict(color="orange", dash="dash"),
+            )
+        )
+
+    # Test predicted (orange dashed)
+    if y_pred_test is not None:
+        y_pred_test = y_pred_test.reindex(y_test.index)
+        fig.add_trace(
+            go.Scatter(
+                x=y_pred_test.index,
+                y=y_pred_test.values,
+                mode="lines",
+                name="Test (predicted)",
+                line=dict(color="orange", dash="dash"),
+            )
+        )
+
+    title = "Actual vs. Predicted"
+    if model_name:
+        title += f" - {model_name}"
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Time",
+        yaxis_title=target,
+        width=width_px,
+        height=height_px,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=0.01,
+        ),
+        template="plotly_white",
+        hovermode="x unified",
+    )
+
+    # Adicionar destaque cinza para o período de testes
+    fig.add_vrect(
+        x0=y_test.index[0],
+        x1=y_test.index[-1],
+        fillcolor="lightgray",
+        opacity=0.2,
+        layer="below",
+        line_width=0,
+    )
+
+    fig.show()
+
+
+def _infer_and_set_frequency(series: pd.Series) -> pd.Series:
+    """Ensure a datetime-indexed series has a frequency when possible.
+
+    Args:
+        series: Input time series with DatetimeIndex.
+
+    Returns:
+        Series with inferred frequency set when it can be inferred.
+
+    Raises:
+        TypeError: If series is not a pandas Series.
+        ValueError: If series index is not a DatetimeIndex.
+    """
+    if not isinstance(series, pd.Series):
+        raise TypeError("Parameter 'series' must be a pandas Series.")
+    if not isinstance(series.index, pd.DatetimeIndex):
+        raise ValueError("Series index must be a DatetimeIndex.")
+
+    if series.index.freq is not None:
+        return series
+
+    inferred = pd.infer_freq(series.index)
+    if inferred is None:
+        return series
+
+    # Do not reindex; only attach the freq metadata to avoid changing data.
+    series = series.copy()
+    series.index = pd.DatetimeIndex(series.index.values, freq=inferred)
+    return series
+
+
+def rolling_forecast_arima(
+    y_train: pd.Series,
+    y_test: pd.Series,
+    order: Tuple[int, int, int],
+    *,
+    use_actual: bool = True,
+    refit: bool = False,
+    enforce_stationarity: bool = False,
+    enforce_invertibility: bool = False,
+) -> pd.Series:
+    """Compute a rolling (walk-forward) forecast for an ARIMA model.
+
+    At each step t in the test set:
+        - Fit/keep a model on data available up to t-1
+        - Forecast 1-step ahead for t
+        - Update the model with either:
+            * the actual y_test[t] (use_actual=True), or
+            * the predicted value (use_actual=False)
+
+    This avoids "frozen" predictions and simulates operational usage.
+
+    Args:
+        y_train: Training target series.
+        y_test: Test target series.
+        order: ARIMA order (p, d, q).
+        use_actual: If True, update with the real observation at each step.
+            If False, update with the predicted value (recursive forecast).
+        refit: If True, refit parameters when updating (slower, sometimes
+            improves accuracy). If False, only update state when supported.
+        enforce_stationarity: Passed to ARIMA constructor.
+        enforce_invertibility: Passed to ARIMA constructor.
+
+    Returns:
+        A pandas Series of rolling predictions aligned to y_test.index.
+
+    Raises:
+        ValueError: If y_train or y_test are empty.
+    """
+    if y_train is None or len(y_train) == 0:
+        raise ValueError("y_train is empty.")
+    if y_test is None or len(y_test) == 0:
+        raise ValueError("y_test is empty.")
+
+    y_train = _infer_and_set_frequency(y_train.dropna())
+    y_test = _infer_and_set_frequency(y_test.dropna())
+
+    history = y_train.copy()
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore")
+        result: ARIMAResults = ARIMA(
+            history,
+            order=order,
+            enforce_stationarity=enforce_stationarity,
+            enforce_invertibility=enforce_invertibility,
+        ).fit()
+
+    preds: List[float] = []
+
+    for ts in y_test.index:
+        # 1-step ahead forecast from the current state
+        fc = result.get_forecast(steps=1).predicted_mean.iloc[0]
+        preds.append(float(fc))
+
+        # Choose what we "observe" at this timestamp
+        new_value = float(y_test.loc[ts]) if use_actual else float(fc)
+
+        # Update model state with new observation when possible
+        can_append = hasattr(result, "append")
+        if can_append:
+            # append expects array-like endog; keep as list to preserve shape
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                result = result.append([new_value], refit=refit)
+        else:
+            # Fallback: refit from scratch (slower, but always works)
+            history = pd.concat([history, pd.Series([new_value], index=[ts])])
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore")
+                result = ARIMA(
+                    history,
+                    order=order,
+                    enforce_stationarity=enforce_stationarity,
+                    enforce_invertibility=enforce_invertibility,
+                ).fit()
+
+        # Keep a consistent history index if we are refitting in fallback mode
+        if not can_append:
+            history = _infer_and_set_frequency(history)
+
+    y_pred = pd.Series(preds, index=y_test.index, name="y_pred_rolling")
+    return y_pred
+```
+
+```{python}
+min_obs_pct = 0.10  # margem mínima ajustável
+
+n = len(y_train)
+min_obs = int(n * min_obs_pct)
+time_idx = np.arange(n)
+
+best_aic = np.inf
+best_break = None
+
+for t_star in range(min_obs, n - min_obs):
+    break_var = (time_idx >= t_star).astype(int)
+    X = sm.add_constant(pd.DataFrame({
+        "time":  time_idx,
+        "break": break_var
+    }))
+    glm = sm.GLM(y_train.values, X, family=sm.families.Gaussian()).fit()
+    if glm.aic < best_aic:
+        best_aic = glm.aic
+        best_break = t_star
+
+break_date = y_train.index[best_break]
+```
+
+```{python}
+X_train_break = sm.add_constant(pd.DataFrame({
+    "time":  np.arange(n),
+    "break": (np.arange(n) >= best_break).astype(int)
+}, index=y_train.index))
+
+X_test_break = sm.add_constant(pd.DataFrame({
+    "time":  np.arange(n, n + len(y_test)),
+    "break": np.ones(len(y_test), dtype=int)
+}, index=y_test.index))
+
+model_break = sm.GLM(y_train.values, X_train_break, family=sm.families.Gaussian()).fit()
+y_pred_train_break = pd.Series(np.exp(model_break.predict(X_train_break)), index=y_train.index)
+
+df_train_break = df_train.copy()
+df_train_break["break"] = (np.arange(n) >= best_break).astype(int)
+df_train_break.to_csv(path_train_break)
+
+df_test_break = df_test.copy()
+df_test_break["break"] = 1
+df_test_break.to_csv(path_test_break)
+```
+
+```{python}
+break_train = (np.arange(n) >= best_break).astype(float).reshape(-1, 1)
+break_test  = np.ones((len(y_test), 1))
+```
+
+### ARIMA(3,0,0) com variável de quebra estrutural
+
+```{python}
+arima_break_300 = ARIMA(y_train, order=(3, 0, 0), exog=break_train).fit()
+print(arima_break_300.summary())
+```
+
+```{python}
+print(f"AIC: {arima_break_300.aic:.2f}")
+print(f"BIC: {arima_break_300.bic:.2f}")
+```
+
+```{python}
+y_pred_train_arima_break_300 = pd.Series(
+    np.exp(arima_break_300.fittedvalues), index=y_train.index
+)
+
+fig_300 = go.Figure()
+fig_300.add_trace(go.Scatter(
+    x=y_train.index, y=np.exp(y_train.values),
+    mode="lines", line=dict(color="black", width=1), name="Treino (observado)"
+))
+fig_300.add_trace(go.Scatter(
+    x=y_pred_train_arima_break_300.index, y=y_pred_train_arima_break_300.values,
+    mode="lines", line=dict(color="orange", dash="dash", width=1.5), name="ARIMA(3,0,0) (treino)"
+))
+fig_300.add_shape(
+    type="line",
+    x0=str(break_date), x1=str(break_date),
+    y0=0, y1=1, yref="paper",
+    line=dict(color="red", dash="dash", width=1.5)
+)
+fig_300.add_annotation(
+    x=str(break_date), y=1, yref="paper",
+    text="Quebra", showarrow=False,
+    xanchor="left", font=dict(color="red")
+)
+fig_300.update_layout(
+    xaxis_title="Data", yaxis_title=target,
+    template="plotly_white", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+)
+fig_300.show()
+```
+
+## Predições para os primeiros 50 itens do conjunto de teste
+
+```{python}
+# Limitar o conjunto de teste aos primeiros 50 itens
+y_test_50 = y_test.iloc[:50]
+break_test_50 = break_test[:50]
+
+# Realizar predições para os primeiros 50 itens
+forecast_obj = arima_break_300.get_forecast(steps=50, exog=break_test_50)
+
+y_pred_test_50 = pd.Series(
+    forecast_obj.predicted_mean.values,
+    index=y_test.iloc[:50].index
+)
+
+# Calcular métricas para os primeiros 50
+metrics_50 = compute_regression_metrics(
+    y_true=y_test_50,
+    y_pred=y_pred_test_50,
+    prefix="test_50_",
+)
+
+print("\nMétricas para os primeiros 50 itens do teste:")
+for key, value in metrics_50.items():
+    print(f"{key}: {value:.4f}")
+```
+
+```{python}
+y_train_orig = np.exp(y_train)
+y_test_orig = np.exp(y_test)[:50]
+
+y_pred_test_50_orig = pd.Series(
+    np.exp(forecast_obj.predicted_mean.values),
+    index=y_test_50.index
+)
+
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter(
+        x=y_train_orig.index,
+        y=y_train_orig.values,
+        mode="lines",
+        name="Train (actual)",
+        line=dict(color="black", width=2),
+    )
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=y_pred_train_arima_break_300.index,
+        y=y_pred_train_arima_break_300.values,
+        mode="lines",
+        name="Train (predicted)",
+        line=dict(color="orange", dash="dash", width=2),
+    )
+)
+
+fig.add_vrect(
+    x0=y_test_50.index.min(),
+    x1=y_test_50.index.max(),
+    fillcolor="lightgray",
+    opacity=0.3,
+    layer="below",
+    line_width=0,
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=y_test_orig.index,
+        y=y_test_orig.values,
+        mode="lines",
+        name="Test (real)",
+        line=dict(color="black", width=2),
+    )
+)
+
+fig.add_trace(
+    go.Scatter(
+        x=y_pred_test_50_orig.index,
+        y=y_pred_test_50_orig.values,
+        mode="lines",
+        name="Forecast (50 steps)",
+        line=dict(color="orange", dash="dash", width=2),
+    )
+)
+
+fig.add_vline(
+    x=y_test_50.index.min(),
+    line=dict(color="red", width=2),
+)
+
+fig.update_layout(
+    title="ARIMA(3,0,0) com quebra — Forecast de 50 passos",
+    xaxis_title="Tempo",
+    yaxis_title="% Silica Concentrate",
+    template="plotly_white",
+    hovermode="x unified",
+    legend=dict(x=0.01, y=0.99)
+)
+
+fig.show()
+```

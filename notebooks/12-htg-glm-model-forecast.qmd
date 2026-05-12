@@ -1,7 +1,7 @@
 ---
-title: "GLM: Desenvolvimento de modelo Lognormal com quebra na série"
+title: "GLM: Predição para o conjunto de teste"
 author: "Hanna Tatsuta Galassi"
-date: "2026-05-05"
+date: "2026-05-10"
 format: html
 toc: true
 echo: false
@@ -35,8 +35,8 @@ warnings.filterwarnings("ignore")
 ```
 
 ```{python}
-path_train = "../data/processed/train_break.csv"
-path_test = "../data/processed/test_break.csv"
+path_train = "../data/processed/train.csv"
+path_test = "../data/processed/test.csv"
 
 df_train = pd.read_csv(
     path_train, index_col="date_fixed", parse_dates=["date_fixed"]
@@ -620,8 +620,8 @@ def compute_regression_metrics(
 ```{python}
 target = "% Silica Concentrate"
 
-X_train = df_train[["time", "break"]]
-X_test = df_test[["time", "break"]]
+X_train = df_train["time"]
+X_test = df_test["time"]
 
 y_train = df_train[target].dropna()
 y_test = df_test[target].dropna()
@@ -633,10 +633,6 @@ y_test = df_test[target].dropna()
 ```{python}
 model = fit_lognormal_glm(X_train, y_train)
 model.summary()
-```
-
-```{python}
-pd.DataFrame({"AIC": [model.aic], "BIC": [model.bic]}, index=["GLM Lognormal (time + break)"])
 ```
 
 ```{python}
@@ -667,7 +663,7 @@ residuals_diagnostics(
 ```
 
 ```{python}
-y_pred_train = np.exp(model.predict(sm.add_constant(X_train, has_constant="add")))
+y_pred_train = np.exp(model.predict(sm.add_constant(X_train)))
 metrics_train = calculate_metrics(
     y_true=y_train, y_pred=y_pred_train)
 metrics_train
@@ -675,390 +671,242 @@ metrics_train
 
 
 ```{python}
-y_pred_test = np.exp(model.predict(sm.add_constant(X_test, has_constant="add")))
+y_pred_test = np.exp(model.predict(sm.add_constant(X_test)))
 metrics_test = calculate_metrics(
     y_true=y_test, y_pred=y_pred_test)
 ```
 
-```{python}
-plot_forecast_vs_actual(
-    y_train=y_train,
-    y_test=y_test,
-    y_pred_train=y_pred_train,
-    y_pred_test=y_pred_test,
-    model_name="GLM (lognormal with time)",
-)
-```
-
-## Análise de resíduos do GLM
-
-```{python}
-_ = plot_acf(
-    residuals_train.dropna(),
-    lags=40,
-    title="ACF of GLM Residuals (log scale)",
-)
-```
-
-```{python}
-_ = plot_pacf(
-    residuals_train.dropna(),
-    lags=40,
-    title="PACF of GLM Residuals (log scale)",
-)
-```
-
-Podemos modelar os resíduos como um processo ARIMA
-
-Candidatos:
-
-- (1,0,1)
-- (2,0,0)
-- (3,0,0)
-
-### ARIMA(1,0,1)
-
-```{python}
-y_train_residues = residuals_train
-y_test_residues = residuals_test
-
-model_residues = ARIMA(residuals_train, order=(1, 0, 1)).fit()
-
-print("AIC:", model_residues.aic)
-print("BIC:", model_residues.bic)
-print(model_residues.summary())
-
-y_pred_train_residues = model_residues.predict(
-    start=y_train_residues.index[0],
-    end=y_train_residues.index[-1],
-)
-y_pred_test_residues = model_residues.predict(
-    start=y_test_residues.index[0],
-    end=y_test_residues.index[-1],
-)
-
-summary_residues = summarize_arima_model(
-    model_result=model_residues,
-    model_name="ARIMA(1,0,1)",
-    y_train=y_train_residues,
-    y_test=None,
-    y_pred_train=y_pred_train_residues,
-    y_pred_test=None,
-)
-print()
-print("Summary metrics - Residues as ARIMA(1,0,1):")
-print(summary_residues)
-```
-
-```{python}
-plot_forecast_vs_actual(
-    y_train=y_train_residues,
-    y_test=y_test_residues,
-    y_pred_train=y_pred_train_residues,
-    y_pred_test=y_pred_test_residues,
-    model_name="log(Residuals) ARIMA(1,0,1)",
-)
-```
-
-### ARIMA(2,0,0)
-
-```{python}
-y_train_residues = residuals_train
-y_test_residues = residuals_test
-
-model_residues = ARIMA(residuals_train, order=(2, 0, 0)).fit()
-
-print("AIC:", model_residues.aic)
-print("BIC:", model_residues.bic)
-print(model_residues.summary())
-
-y_pred_train_residues = model_residues.predict(
-    start=y_train_residues.index[0],
-    end=y_train_residues.index[-1],
-)
-y_pred_test_residues = model_residues.predict(
-    start=y_test_residues.index[0],
-    end=y_test_residues.index[-1],
-)
-
-summary_residues = summarize_arima_model(
-    model_result=model_residues,
-    model_name="ARIMA(2,0,0)",
-    y_train=y_train_residues,
-    y_test=None,
-    y_pred_train=y_pred_train_residues,
-    y_pred_test=None,
-)
-print()
-print("Summary metrics - Residues as ARIMA(2,0,0):")
-print(summary_residues)
-```
-
-```{python}
-plot_forecast_vs_actual(
-    y_train=y_train_residues,
-    y_test=y_test_residues,
-    y_pred_train=y_pred_train_residues,
-    y_pred_test=y_pred_test_residues,
-    model_name="log(Residuals) ARIMA(2,0,0)",
-)
-```
-
-### ARIMA(3,0,0)
-
-```{python}
-y_train_residues = residuals_train
-y_test_residues = residuals_test
-
-model_residues = ARIMA(residuals_train, order=(3, 0, 0)).fit()
-
-print("AIC:", model_residues.aic)
-print("BIC:", model_residues.bic)
-print(model_residues.summary())
-
-y_pred_train_residues = model_residues.predict(
-    start=y_train_residues.index[0],
-    end=y_train_residues.index[-1],
-)
-y_pred_test_residues = model_residues.predict(
-    start=y_test_residues.index[0],
-    end=y_test_residues.index[-1],
-)
-
-summary_residues = summarize_arima_model(
-    model_result=model_residues,
-    model_name="ARIMA(3,0,0)",
-    y_train=y_train_residues,
-    y_test=None,
-    y_pred_train=y_pred_train_residues,
-    y_pred_test=None,
-)
-print()
-print("Summary metrics - Residues as ARIMA(3,0,0):")
-print(summary_residues)
-```
-
-```{python}
-plot_forecast_vs_actual(
-    y_train=y_train_residues,
-    y_test=y_test_residues,
-    y_pred_train=y_pred_train_residues,
-    y_pred_test=y_pred_test_residues,
-    model_name="log(Residuals) ARIMA(3,0,0)",
-)
-```
-
 ## GLM Lognormal com tempo e AR(3)
 
-O modelo usa `time` e os resíduos defasados em 1 passo (`resid_ar1`) como covariáveis.
-Como `resid_ar1` já está em escala logarítmica, ele entra diretamente no preditor linear.
 
 ```{python}
 resid_ar1_train = residuals_train.shift(1)
 resid_ar2_train = residuals_train.shift(2)
 resid_ar3_train = residuals_train.shift(3)
-
 resid_ar1_test  = residuals_test.shift(1)
 resid_ar2_test  = residuals_test.shift(2)
 resid_ar3_test  = residuals_test.shift(3)
 
-X_train_glarma_3_0_0 = sm.add_constant(
-    pd.DataFrame({
-        "time": X_train["time"],
-        "break": X_train["break"],
-        "resid_ar1": resid_ar1_train,
-        "resid_ar2": resid_ar2_train,
-        "resid_ar3": resid_ar3_train}), has_constant="add")
-X_test_glarma_3_0_0  = sm.add_constant(
-    pd.DataFrame({"time": X_test["time"],
-    "break": X_test["break"],
+X_train_glarma = sm.add_constant(
+    pd.DataFrame({"time": X_train,
+    "resid_ar1": resid_ar1_train,
+    "resid_ar2": resid_ar2_train,
+    "resid_ar3": resid_ar3_train}))
+X_test_glarma  = sm.add_constant(
+    pd.DataFrame({"time": X_test,
     "resid_ar1": resid_ar1_test,
     "resid_ar2": resid_ar2_test,
-    "resid_ar3": resid_ar3_test}), has_constant="add")
+    "resid_ar3": resid_ar3_test}))
 
 log_y_train = np.log(y_train)
 
-model_glarma_3_0_0 = sm.GLM(
-    log_y_train, X_train_glarma_3_0_0, family=sm.families.Gaussian(),
+model_glarma = sm.GLM(
+    log_y_train, X_train_glarma, family=sm.families.Gaussian(),
     missing="drop").fit()
-model_glarma_3_0_0.summary()
+model_glarma.summary()
 ```
 
 ```{python}
-pd.DataFrame({"AIC": [model_glarma_3_0_0.aic], "BIC": [model_glarma_3_0_0.bic]}, index=["GLM Lognormal (time + resid_ar1,2,3)"])
+pd.DataFrame({"AIC": [model_glarma.aic], "BIC": [model_glarma.bic]}, index=["GLM Lognormal (time + resid_ar1,2,3)"])
 ```
 
 ```{python}
-y_pred_train_glarma_3_0_0 = np.exp(model_glarma_3_0_0.predict(X_train_glarma_3_0_0))
-y_pred_test_glarma_3_0_0  = np.exp(
-    model_glarma_3_0_0.predict(X_test_glarma_3_0_0))
+y_pred_train_glarma = np.exp(model_glarma.predict(X_train_glarma))
+y_pred_test_glarma  = np.exp(
+    model_glarma.predict(X_test_glarma))
 
-metrics_train_glarma_3_0_0 = calculate_metrics(
-    y_true=y_train, y_pred=y_pred_train_glarma_3_0_0)
-metrics_test_glarma_3_0_0  = calculate_metrics(
-    y_true=y_test,  y_pred=y_pred_test_glarma_3_0_0)
+metrics_train_glarma = calculate_metrics(
+    y_true=y_train, y_pred=y_pred_train_glarma)
+metrics_test_glarma  = calculate_metrics(
+    y_true=y_test,  y_pred=y_pred_test_glarma)
 
 print("Train metrics:")
-print(metrics_train_glarma_3_0_0)
+print(metrics_train_glarma)
 print("\nTest metrics:")
-print(metrics_test_glarma_3_0_0)
+print(metrics_test_glarma)
 ```
 
 ```{python}
 plot_forecast_vs_actual(
     y_train=y_train,
     y_test=y_test,
-    y_pred_train=y_pred_train_glarma_3_0_0,
-    y_pred_test=y_pred_test_glarma_3_0_0,
+    y_pred_train=y_pred_train_glarma,
+    y_pred_test=y_pred_test_glarma,
     model_name="GLM Lognormal (time + resid(3,0,0))",
 )
 ```
 
 ```{python}
-residuals_glarma_3_0_0 = compute_glarma_residuals(
-    result=model_glarma_3_0_0, y=y_train)
+residuals_glarma = compute_glarma_residuals(
+    result=model_glarma, y=y_train)
 
 plot_glarma_diagnostics(
-    residuals=residuals_glarma_3_0_0,
+    residuals=residuals_glarma,
     model_name="GLM Lognormal (time + resid(3,0,0))",
     nlags=40,
 )
 ```
 
-```{python}
-residuals_diagnostics(residuals=residuals_glarma_3_0_0, lags=10)
-```
-
-## GLM Lognormal com tempo e AR(1), MA(1)
-
-O modelo ajusta um ARIMA(1,0,1) sobre os resíduos do GLM base e usa os valores ajustados como covariável.
+## Predições para o conjunto de teste
 
 ```{python}
-arima_resid_101 = ARIMA(residuals_train, order=(1, 0, 1)).fit()
-arima_fitted_101 = arima_resid_101.fittedvalues
-
-X_train_arma101 = sm.add_constant(pd.DataFrame({
-    "time":       X_train["time"],
-    "break":      X_train["break"],
-    "arma_resid": arima_fitted_101
-}), has_constant="add")
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    model_arma101 = sm.GLM(
-        np.log(y_train), X_train_arma101,
-        family=sm.families.Gaussian(), missing="drop"
-    ).fit()
-model_arma101.summary()
+glarma_cte = model_glarma.params["const"]
+coef_time = model_glarma.params["time"]
+coef_ar1 = model_glarma.params["resid_ar1"]
+coef_ar2 = model_glarma.params["resid_ar2"]
+coef_ar3 = model_glarma.params["resid_ar3"]
 ```
 
 ```{python}
-pd.DataFrame(
-    {"AIC": [model_arma101.aic], "BIC": [model_arma101.bic]},
-    index=["GLM Lognormal (time + ARMA(1,0,1) resid)"]
+horizonte = 50
+
+X_pred_glarma = pd.DataFrame()
+X_pred_glarma.index = X_test.index
+X_pred_glarma = X_pred_glarma[:horizonte]
+X_pred_glarma["const"] = glarma_cte
+X_pred_glarma["time"] = (
+    X_pred_glarma.index - start_time).total_seconds()
+
+y_pred_test_glarma = pd.DataFrame()
+y_pred_test_glarma.index = X_pred_glarma.index
+y_pred_test_glarma
+
+y_test_glarma = y_test[:horizonte]
+```
+
+```{python}
+X_pred_glarma.loc[X_pred_glarma.index[0], "resid_ar1"] = (
+    X_train_glarma.loc[X_train_glarma.index[-1], "resid_ar1"] *
+    coef_ar1)
+X_pred_glarma.loc[X_pred_glarma.index[0], "resid_ar2"] = (
+    X_train_glarma.loc[X_train_glarma.index[-1], "resid_ar2"] *
+    coef_ar2)
+X_pred_glarma.loc[X_pred_glarma.index[0], "resid_ar3"] = (
+    X_train_glarma.loc[X_train_glarma.index[-1], "resid_ar3"] *
+    coef_ar3)
+y_pred_test_glarma.loc[X_pred_glarma.index[0], "pred"] = np.exp(
+    glarma_cte +
+    coef_time * X_pred_glarma.loc[
+        X_pred_glarma.index[0], "time"] +
+    coef_ar1 * X_pred_glarma.loc[
+        X_pred_glarma.index[0], "resid_ar1"] +
+    coef_ar2 * X_pred_glarma.loc[
+        X_pred_glarma.index[0], "resid_ar2"] +
+    coef_ar3 * X_pred_glarma.loc[
+        X_pred_glarma.index[0], "resid_ar3"]
 )
-```
 
-```{python}
-y_pred_train_arma101 = np.exp(model_arma101.predict(X_train_arma101))
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    arima_test_forecast = arima_resid_101.forecast(steps=len(y_test))
-arima_test_forecast.index = X_test.index
-
-X_test_arma101 = sm.add_constant(pd.DataFrame({
-    "time":       X_test["time"],
-    "break":      X_test["break"],
-    "arma_resid": arima_test_forecast
-}), has_constant="add")
-y_pred_test_arma101 = np.exp(model_arma101.predict(X_test_arma101))
-
-print("Train metrics:")
-print(calculate_metrics(y_true=y_train, y_pred=y_pred_train_arma101))
-print("\nTest metrics:")
-print(calculate_metrics(y_true=y_test, y_pred=y_pred_test_arma101))
+for i in range(1, len(X_pred_glarma)):
+    X_pred_glarma.loc[X_pred_glarma.index[i], "resid_ar1"] = (
+        X_pred_glarma.loc[
+            X_pred_glarma.index[i - 1], "resid_ar1"] *
+        coef_ar1)
+    X_pred_glarma.loc[X_pred_glarma.index[i], "resid_ar2"] = (
+        X_pred_glarma.loc[
+            X_pred_glarma.index[i - 1], "resid_ar2"] *
+        coef_ar2)
+    X_pred_glarma.loc[X_pred_glarma.index[i], "resid_ar3"] = (
+        X_pred_glarma.loc[
+            X_pred_glarma.index[i - 1], "resid_ar3"] *
+        coef_ar3)
+    y_pred_test_glarma.loc[X_pred_glarma.index[i], "pred"] = \
+        np.exp(
+            glarma_cte +
+            coef_time * X_pred_glarma.loc[
+                X_pred_glarma.index[i], "time"] +
+            coef_ar1 * X_pred_glarma.loc[
+                X_pred_glarma.index[i], "resid_ar1"] +
+            coef_ar2 * X_pred_glarma.loc[
+                X_pred_glarma.index[i], "resid_ar2"] +
+            coef_ar3 * X_pred_glarma.loc[
+                X_pred_glarma.index[i], "resid_ar3"]
+        )
 ```
 
 ```{python}
 plot_forecast_vs_actual(
     y_train=y_train,
-    y_test=y_test,
-    y_pred_train=y_pred_train_arma101,
-    y_pred_test=y_pred_test_arma101,
-    model_name="GLM Lognormal (time + ARMA(1,0,1) resid)",
+    y_test=y_test_glarma,
+    y_pred_train=y_pred_train_glarma,
+    y_pred_test=y_pred_test_glarma["pred"],
+    model_name="GLM Lognormal (time + resid(3,0,0))",
 )
 ```
 
 ```{python}
-residuals_arma101 = compute_glarma_residuals(result=model_arma101, y=y_train)
+metrics_test_glarma_final = calculate_metrics(
+    y_true=y_test_glarma, 
+    y_pred=y_pred_test_glarma["pred"]
+)
+metrics_test_glarma_final
+```
 
-plot_glarma_diagnostics(
-    residuals=residuals_arma101,
-    model_name="GLM Lognormal (time + ARMA(1,0,1) resid)",
-    nlags=40,
+```{python}
+X_pred_glarma
+```
+
+## Simulação de cenário em Produção: Predição com janela móvel para o Conjunto de Teste
+
+```{python}
+# Simulação de cenário de produção: predições rolling 1-step-ahead
+# Usando o modelo GLM Lognormal com tempo e AR(3) nos resíduos
+
+# Obter os últimos resíduos do treino para inicializar
+last_residuals = residuals_train.iloc[-3:].values  # [resid_{t-3}, resid_{t-2}, resid_{t-1}]
+
+rolling_predictions = []
+rolling_actuals = []
+
+X_test_rolling = X_test.iloc[:horizonte]
+y_test_rolling = y_test.iloc[:horizonte]
+
+for t in range(len(y_test_rolling)):
+    # Preparar X para predição: const, time, resid_ar1, resid_ar2, resid_ar3
+    current_time = X_test_rolling.iloc[t]
+    X_current = pd.DataFrame({
+        'const': [1.0],
+        'time': [current_time],
+        'resid_ar1': [last_residuals[2]],  # resid_{t-1}
+        'resid_ar2': [last_residuals[1]],  # resid_{t-2}
+        'resid_ar3': [last_residuals[0]],  # resid_{t-3}
+    })
+    
+    # Predição no log-scale
+    log_y_pred = model_glarma.predict(X_current).iloc[0]
+    y_pred = np.exp(log_y_pred)
+    
+    # Valor atual observado
+    y_actual = y_test_rolling.iloc[t]
+    
+    # Computar residual: log(y_actual) - log(y_pred)
+    residual = np.log(y_actual) - log_y_pred
+    
+    # Armazenar predição e atual
+    rolling_predictions.append(y_pred)
+    rolling_actuals.append(y_actual)
+    
+    # Atualizar os últimos resíduos para o próximo passo
+    last_residuals = np.roll(last_residuals, -1)  # Shift para esquerda
+    last_residuals[-1] = residual  # Novo residual na posição mais recente
+
+# Criar séries pandas para o horizonte definido
+rolling_pred_series = pd.Series(rolling_predictions, index=y_test_rolling.index, name='Rolling Prediction')
+rolling_actual_series = pd.Series(rolling_actuals, index=y_test_rolling.index, name='Actual')
+
+# Plot da predição rolling
+plot_forecast_vs_actual(
+    y_train=y_train,
+    y_test=rolling_actual_series,
+    y_pred_test=rolling_pred_series,
+    model_name="GLM Lognormal Rolling (Produção)",
 )
 ```
 
 ```{python}
-residuals_diagnostics(residuals=residuals_arma101, lags=10)
-```
-
-## Comparação de modelos
-
-```{python}
-break_train_exog = X_train["break"].values.reshape(-1, 1)
-break_test_exog  = X_test["break"].values.reshape(-1, 1)
-
-arima_300_break = ARIMA(np.log(y_train), order=(3, 0, 0), exog=break_train_exog).fit()
-arima_101_break = ARIMA(np.log(y_train), order=(1, 0, 1), exog=break_train_exog).fit()
-
-y_pred_train_arima_300 = pd.Series(np.exp(arima_300_break.fittedvalues), index=y_train.index)
-y_pred_train_arima_101 = pd.Series(np.exp(arima_101_break.fittedvalues), index=y_train.index)
-```
-
-### GLM AR(3) vs ARIMA(3,0,0)
-
-```{python}
-fig_cmp1 = go.Figure()
-fig_cmp1.add_trace(go.Scatter(
-    x=y_train.index, y=y_train.values,
-    mode="lines", line=dict(color="black", width=1), name="Observado"
-))
-fig_cmp1.add_trace(go.Scatter(
-    x=y_train.index, y=y_pred_train_glarma_3_0_0.values,
-    mode="lines", line=dict(color="royalblue", dash="dash", width=1.5), name="GLM AR(3)"
-))
-fig_cmp1.add_trace(go.Scatter(
-    x=y_train.index, y=y_pred_train_arima_300.values,
-    mode="lines", line=dict(color="orange", dash="dash", width=1.5), name="ARIMA(3,0,0)"
-))
-fig_cmp1.update_layout(
-    xaxis_title="Data", yaxis_title=target,
-    template="plotly_white", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+# Métricas para a predição rolling
+metrics_rolling = calculate_metrics(
+    y_true=rolling_actual_series, 
+    y_pred=rolling_pred_series
 )
-fig_cmp1.show()
-```
-
-### GLM ARMA(1,1) vs ARIMA(1,0,1)
-
-```{python}
-fig_cmp2 = go.Figure()
-fig_cmp2.add_trace(go.Scatter(
-    x=y_train.index, y=y_train.values,
-    mode="lines", line=dict(color="black", width=1), name="Observado"
-))
-fig_cmp2.add_trace(go.Scatter(
-    x=y_train.index, y=y_pred_train_arma101.values,
-    mode="lines", line=dict(color="royalblue", dash="dash", width=1.5), name="GLM ARMA(1,1)"
-))
-fig_cmp2.add_trace(go.Scatter(
-    x=y_train.index, y=y_pred_train_arima_101.values,
-    mode="lines", line=dict(color="orange", dash="dash", width=1.5), name="ARIMA(1,0,1)"
-))
-fig_cmp2.update_layout(
-    xaxis_title="Data", yaxis_title=target,
-    template="plotly_white", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
-)
-fig_cmp2.show()
+metrics_rolling
 ```
