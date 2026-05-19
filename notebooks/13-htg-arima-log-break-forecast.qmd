@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import statsmodels.api as sm
-from scipy.stats import shapiro
+from scipy.stats import shapiro, t
 from statsmodels.graphics.gofplots import qqplot
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from statsmodels.stats.diagnostic import acorr_ljungbox
@@ -443,6 +443,8 @@ def plot_forecast_vs_actual(
     y_test: pd.Series,
     y_pred_train: Optional[pd.Series] = None,
     y_pred_test: Optional[pd.Series] = None,
+    y_pred_test_lower: Optional[pd.Series] = None,
+    y_pred_test_upper: Optional[pd.Series] = None,
     model_name: str = "",
     figsize: Tuple[int, int] = (12, 6)
 ) -> None:
@@ -508,6 +510,22 @@ def plot_forecast_vs_actual(
                 mode="lines",
                 name="Train (predicted)",
                 line=dict(color="orange", dash="dash"),
+            )
+        )
+
+    # Test predicted confidence interval (orange band)
+    if y_pred_test_lower is not None and y_pred_test_upper is not None:
+        lower = y_pred_test_lower.reindex(y_test.index)
+        upper = y_pred_test_upper.reindex(y_test.index)
+        fig.add_trace(
+            go.Scatter(
+                x=upper.index.tolist() + lower.index.tolist()[::-1],
+                y=upper.values.tolist() + lower.values.tolist()[::-1],
+                fill="toself",
+                fillcolor="rgba(255, 165, 0, 0.2)",
+                line=dict(color="rgba(255,255,255,0)"),
+                showlegend=True,
+                name="95% CI",
             )
         )
 
@@ -782,17 +800,58 @@ fig_300.show()
 ## Predições para os primeiros 50 itens do conjunto de teste
 
 ```{python}
+horizonte = 790
 # Limitar o conjunto de teste aos primeiros 50 itens
-y_test_50 = y_test.iloc[:50]
-break_test_50 = break_test[:50]
+y_test_50 = y_test.iloc[:horizonte]
+break_test_50 = break_test[:horizonte]
 
 # Realizar predições para os primeiros 50 itens
-forecast_obj = arima_break_300.get_forecast(steps=50, exog=break_test_50)
+forecast_obj = arima_break_300.get_forecast(
+    steps=horizonte, exog=break_test_50)
 
+# Previsão no log-scale para os primeiros 50 itens
 y_pred_test_50 = pd.Series(
     forecast_obj.predicted_mean.values,
-    index=y_test.iloc[:50].index
+    index=y_test.iloc[:horizonte].index
 )
+
+# Intervalos usando o método statsmodels
+forecast_ci = forecast_obj.conf_int(alpha=0.05)
+
+lower_test_50_statsmodels = pd.Series(
+    forecast_ci.iloc[:, 0].values,
+    index=y_test_50.index,
+    name="lower_statsmodels"
+)
+upper_test_50_statsmodels = pd.Series(
+    forecast_ci.iloc[:, 1].values,
+    index=y_test_50.index,
+    name="upper_statsmodels"
+)
+
+# Conversão para escala original
+y_pred_test_50_orig = np.exp(y_pred_test_50)
+lower_test_50_statsmodels_orig = np.exp(lower_test_50_statsmodels)
+upper_test_50_statsmodels_orig = np.exp(upper_test_50_statsmodels)
+
+# Intervalos pela metodologia manual baseada no erro padrão da previsão ARIMA
+
+alpha = 0.05
+se_mean_manual = pd.Series(forecast_obj.se_mean, index=y_test_50.index)
+
+residuals_manual = pd.Series(arima_break_300.resid).dropna()
+T_manual = len(residuals_manual)
+p_manual = len(arima_break_300.params)
+
+df_manual = T_manual - p_manual
+
+t_crit_manual = t.ppf(1 - alpha / 2, df=df_manual)
+
+lower_log_manual = y_pred_test_50 - t_crit_manual * se_mean_manual
+upper_log_manual = y_pred_test_50 + t_crit_manual * se_mean_manual
+
+lower_test_50_manual_orig = np.exp(lower_log_manual)
+upper_test_50_manual_orig = np.exp(upper_log_manual)
 
 # Calcular métricas para os primeiros 50
 metrics_50 = compute_regression_metrics(
@@ -808,7 +867,7 @@ for key, value in metrics_50.items():
 
 ```{python}
 y_train_orig = np.exp(y_train)
-y_test_orig = np.exp(y_test)[:50]
+y_test_orig = np.exp(y_test)[:horizonte]
 
 y_pred_test_50_orig = pd.Series(
     np.exp(forecast_obj.predicted_mean.values),
@@ -881,4 +940,118 @@ fig.update_layout(
 )
 
 fig.show()
+```
+
+```{python}
+# Plot dos intervalos de previsão usando statsmodels
+fig_statsmodels = go.Figure()
+fig_statsmodels.add_trace(go.Scatter(
+    x=y_train_orig.index,
+    y=y_train_orig.values,
+    mode="lines",
+    name="Train (actual)",
+    line=dict(color="black", width=2),
+))
+fig_statsmodels.add_trace(go.Scatter(
+    x=y_pred_train_arima_break_300.index,
+    y=y_pred_train_arima_break_300.values,
+    mode="lines",
+    name="Train (predicted)",
+    line=dict(color="orange", dash="dash", width=2),
+))
+fig_statsmodels.add_trace(go.Scatter(
+    x=y_test_orig.index,
+    y=y_test_orig.values,
+    mode="lines",
+    name="Test (actual)",
+    line=dict(color="black", width=2),
+))
+fig_statsmodels.add_trace(go.Scatter(
+    x=y_pred_test_50_orig.index.tolist() + y_pred_test_50_orig.index[::-1].tolist(),
+    y=upper_test_50_statsmodels_orig.tolist() + lower_test_50_statsmodels_orig[::-1].tolist(),
+    fill="toself",
+    fillcolor="rgba(255, 165, 0, 0.2)",
+    line=dict(color="rgba(255,255,255,0)"),
+    name="95% CI statsmodels",
+))
+fig_statsmodels.add_trace(go.Scatter(
+    x=y_pred_test_50_orig.index,
+    y=y_pred_test_50_orig.values,
+    mode="lines",
+    name="Forecast (statsmodels)",
+    line=dict(color="orange", dash="dash", width=2),
+))
+fig_statsmodels.update_layout(
+    title="ARIMA(3,0,0) com quebra — Intervalos statsmodels",
+    xaxis_title="Tempo",
+    yaxis_title="% Silica Concentrate",
+    template="plotly_white",
+    hovermode="x unified",
+    legend=dict(x=0.01, y=0.99),
+)
+fig_statsmodels.show()
+```
+
+```{python}
+# Plot dos intervalos de previsão usando método manual similar aos notebooks 12 e 14
+fig_manual = go.Figure()
+fig_manual.add_trace(go.Scatter(
+    x=y_train_orig.index,
+    y=y_train_orig.values,
+    mode="lines",
+    name="Train (actual)",
+    line=dict(color="black", width=2),
+))
+fig_manual.add_trace(go.Scatter(
+    x=y_pred_train_arima_break_300.index,
+    y=y_pred_train_arima_break_300.values,
+    mode="lines",
+    name="Train (predicted)",
+    line=dict(color="orange", dash="dash", width=2),
+))
+fig_manual.add_trace(go.Scatter(
+    x=y_test_orig.index,
+    y=y_test_orig.values,
+    mode="lines",
+    name="Test (actual)",
+    line=dict(color="black", width=2),
+))
+fig_manual.add_trace(go.Scatter(
+    x=y_pred_test_50_orig.index.tolist() + y_pred_test_50_orig.index[::-1].tolist(),
+    y=upper_test_50_manual_orig.tolist() + lower_test_50_manual_orig[::-1].tolist(),
+    fill="toself",
+    fillcolor="rgba(0, 128, 0, 0.2)",
+    line=dict(color="rgba(255,255,255,0)"),
+    name="95% CI manual",
+))
+fig_manual.add_trace(go.Scatter(
+    x=y_pred_test_50_orig.index,
+    y=y_pred_test_50_orig.values,
+    mode="lines",
+    name="Forecast (manual)",
+    line=dict(color="orange", dash="dash", width=2),
+))
+fig_manual.update_layout(
+    title="ARIMA(3,0,0) com quebra — Intervalos manuais",
+    xaxis_title="Tempo",
+    yaxis_title="% Silica Concentrate",
+    template="plotly_white",
+    hovermode="x unified",
+    legend=dict(x=0.01, y=0.99),
+)
+fig_manual.show()
+```
+
+```{python}
+# DataFrame final com predição e intervalos de previsão para cada amostra
+forecast_intervals_df = pd.DataFrame({
+    "y_pred": y_pred_test_50_orig,
+    "lower_statsmodels": lower_test_50_statsmodels_orig,
+    "upper_statsmodels": upper_test_50_statsmodels_orig,
+    "lower_manual": lower_test_50_manual_orig,
+    "upper_manual": upper_test_50_manual_orig,
+})
+
+print("DataFrame de previsões e intervalos para os primeiros 50 itens do teste:")
+forecast_intervals_df
 ```
